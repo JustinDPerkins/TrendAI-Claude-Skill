@@ -1,77 +1,95 @@
 ---
 name: trendai-scan-iac
 description: Scan Terraform and CloudFormation templates for security misconfigurations using Vision One Cloud Posture API.
-argument-hint: [template-file-or-directory]
-allowed-tools: Read, Grep, Glob, Bash
+argument-hint: [directory-or-file]
+allowed-tools: Read, Bash
 ---
 
 # TrendAI IaC Scanner
 
 Scan **Terraform** and **CloudFormation** templates for security misconfigurations.
 
-## What This Scans
-
-| File Type | Method | Examples |
-|-----------|--------|----------|
-| CloudFormation | Template API | `.yaml`, `.yml`, `.json` with `AWSTemplateFormatVersion` |
-| Terraform HCL | Archive API | `.tf` files |
-| Terraform Plan | Template API | `plan.json` from `terraform show -json` |
-
 ## Prerequisites
 
-1. `TMAS_API_KEY` environment variable (Vision One API token)
-2. Token must have **Cloud Posture** permissions enabled
+1. `TMAS_API_KEY` environment variable (Vision One API token with Cloud Posture permissions)
+2. `jq` installed for JSON processing
 
-Optional: `V1_REGION` for non-US regions (default: `api.xdr.trendmicro.com`)
+Optional: `V1_REGION` (default: `api.xdr.trendmicro.com`)
 
-### Vision One Regions
+## IMPORTANT: Batch Scanning
 
-| Region | Endpoint |
-|--------|----------|
-| US | api.xdr.trendmicro.com |
-| EU | api.eu.xdr.trendmicro.com |
-| Japan | api.xdr.trendmicro.co.jp |
-| Singapore | api.sg.xdr.trendmicro.com |
-| Australia | api.au.xdr.trendmicro.com |
+When given a directory, scan ALL IaC files in a single operation:
+- **Terraform**: Zip all `.tf` files together → one API call
+- **CloudFormation**: Combine all templates → one API call per template type
 
-## Scan CloudFormation
+DO NOT prompt for each file individually. Run ONE bash command that handles everything.
+
+## Scan Directory (Recommended)
+
+Use this single command to scan an entire directory:
 
 ```bash
+#!/bin/bash
+set -e
+TARGET_DIR="${1:-.}"
 V1_REGION="${V1_REGION:-api.xdr.trendmicro.com}"
+RESULTS_FILE="/tmp/iac-scan-results.json"
+echo "[]" > "$RESULTS_FILE"
 
-curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplate" \
-  -H "Authorization: Bearer ${TMAS_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d "{\"type\": \"cloudformation-template\", \"content\": $(cat /path/to/template.yaml | jq -Rs .)}"
+# Scan Terraform files
+TF_FILES=$(find "$TARGET_DIR" -name "*.tf" -type f 2>/dev/null | head -100)
+if [ -n "$TF_FILES" ]; then
+  echo "Found Terraform files, creating archive..."
+  rm -f /tmp/tf-scan.zip
+  cd "$TARGET_DIR"
+  find . -name "*.tf" -type f | xargs zip -@ /tmp/tf-scan.zip 2>/dev/null
+
+  echo "Scanning Terraform archive..."
+  TF_RESULT=$(curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplateArchive" \
+    -H "Authorization: Bearer ${TMAS_API_KEY}" \
+    -F "type=terraform-archive" \
+    -F "file=@/tmp/tf-scan.zip")
+  echo "$TF_RESULT" | jq -r '.scanResults // []' >> "$RESULTS_FILE"
+fi
+
+# Scan CloudFormation files
+CFN_FILES=$(find "$TARGET_DIR" \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" \) -type f 2>/dev/null | xargs grep -l "AWSTemplateFormatVersion\|AWS::" 2>/dev/null | head -50)
+if [ -n "$CFN_FILES" ]; then
+  echo "Found CloudFormation templates..."
+  for f in $CFN_FILES; do
+    echo "Scanning: $f"
+    CONTENT=$(cat "$f" | jq -Rs .)
+    CFN_RESULT=$(curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplate" \
+      -H "Authorization: Bearer ${TMAS_API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d "{\"type\": \"cloudformation-template\", \"content\": $CONTENT}")
+    echo "$CFN_RESULT" | jq -r --arg file "$f" '.scanResults // [] | map(. + {file: $file})'
+  done
+fi
+
+echo "Scan complete."
 ```
 
-## Scan Terraform HCL (.tf files)
+## Scan Single File
 
+### Terraform (.tf)
 ```bash
-# Create zip archive of .tf files
-cd /path/to/terraform/dir
-zip -r /tmp/tf-scan.zip *.tf modules/ 2>/dev/null || zip -r /tmp/tf-scan.zip *.tf
-
-# Send to API
 V1_REGION="${V1_REGION:-api.xdr.trendmicro.com}"
+DIR=$(dirname "$FILE")
+cd "$DIR" && zip -j /tmp/tf-scan.zip *.tf
 curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplateArchive" \
   -H "Authorization: Bearer ${TMAS_API_KEY}" \
   -F "type=terraform-archive" \
   -F "file=@/tmp/tf-scan.zip"
 ```
 
-## Scan Terraform Plan JSON
-
+### CloudFormation (.yaml/.yml/.json)
 ```bash
-# Generate plan JSON first
-terraform plan -out=plan.out && terraform show -json plan.out > plan.json
-
-# Scan
 V1_REGION="${V1_REGION:-api.xdr.trendmicro.com}"
 curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplate" \
   -H "Authorization: Bearer ${TMAS_API_KEY}" \
   -H "Content-Type: application/json" \
-  -d "{\"type\": \"terraform-template\", \"content\": $(cat plan.json | jq -Rs .)}"
+  -d "{\"type\": \"cloudformation-template\", \"content\": $(cat "$FILE" | jq -Rs .)}"
 ```
 
 ## Response Format
@@ -84,65 +102,64 @@ curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplate" \
       "ruleTitle": "S3 bucket encryption not enabled",
       "riskLevel": "HIGH",
       "status": "FAILURE",
-      "description": "S3 bucket should have encryption",
       "resourceId": "aws_s3_bucket.data",
-      "resourceType": "aws_s3_bucket",
       "resolutionReferenceLink": "https://..."
     }
   ]
 }
 ```
 
-- Only show findings where `status` is `FAILURE`
-- `riskLevel`: VERY_HIGH, HIGH, MEDIUM, LOW
+Only report findings where `status` is `FAILURE`.
 
 ## Workflow
 
-1. Detect template type (CloudFormation vs Terraform)
-2. Check API key: `echo $TMAS_API_KEY | head -c 20`
-3. Run appropriate curl command
-4. Parse JSON and present findings
-
-## Detecting Template Type
-
-**CloudFormation** - Look for in `.yaml`/`.yml`/`.json`:
-- `AWSTemplateFormatVersion`
-- `Resources` with `AWS::` types
-- `Transform: AWS::Serverless`
-
-**Terraform** - File extension:
-- `.tf` = HCL (use archive endpoint)
-- `.tf.json` or `plan.json` = JSON (use template endpoint)
+1. Check target is file or directory
+2. If directory: Run batch scan script above (ONE bash command)
+3. If file: Detect type and run single-file scan
+4. Collect all results and present summary
 
 ## Output Format
 
 ```
 ## IaC Security Scan Results
 
-**Target**: /path/to/main.tf
-**Type**: Terraform
+**Target**: /path/to/infrastructure
+**Files Scanned**: 12 Terraform, 3 CloudFormation
 **Scanned**: 2026-02-05
 
 ### Summary
 | Severity | Count |
 |----------|-------|
-| Critical | 0 |
-| High | 3 |
-| Medium | 5 |
+| Critical | 1 |
+| High | 5 |
+| Medium | 8 |
+| Low | 3 |
 
-### Findings
+### Critical/High Findings
 
-#### [HIGH] AWS-S3-001: S3 bucket encryption not enabled
+#### [CRITICAL] AWS-IAM-001: IAM policy allows *
+- **File**: iam.tf
+- **Resource**: aws_iam_policy.admin
+- **Fix**: Restrict to specific resources
+
+#### [HIGH] AWS-S3-001: S3 bucket not encrypted
+- **File**: s3.tf
 - **Resource**: aws_s3_bucket.data
-- **Description**: S3 bucket should have server-side encryption
-- **Fix**: Add `server_side_encryption_configuration` block
-- **Reference**: https://...
+- **Fix**: Add server_side_encryption_configuration
 
-#### [MEDIUM] AWS-S3-005: S3 bucket versioning disabled
-- **Resource**: aws_s3_bucket.data
-- **Description**: Enable versioning for data protection
-- **Fix**: Add `versioning { enabled = true }`
+### Medium/Low Findings
+(list remaining...)
 ```
+
+## Vision One Regions
+
+| Region | Endpoint |
+|--------|----------|
+| US | api.xdr.trendmicro.com |
+| EU | api.eu.xdr.trendmicro.com |
+| Japan | api.xdr.trendmicro.co.jp |
+| Singapore | api.sg.xdr.trendmicro.com |
+| Australia | api.au.xdr.trendmicro.com |
 
 ## Target
 
