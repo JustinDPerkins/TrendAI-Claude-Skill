@@ -7,8 +7,14 @@ Scan your code for **vulnerabilities**, **secrets**, **malware**, and **IaC misc
 ## Quick Install
 
 ```bash
-claude plugins add github:JustinDPerkins/TrendAI-Claude-Skill
+# Step 1: Add the marketplace
+claude plugin marketplace add github:JustinDPerkins/TrendAI-Claude-Skill
+
+# Step 2: Install the plugin
+claude plugin install trendai-security
 ```
+
+Then restart Claude Code for the plugin to load.
 
 ## Setup
 

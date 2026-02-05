@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "trendai-security",
+  "description": "TrendAI Security Scanner - Scan code for vulnerabilities, secrets, malware, and IaC misconfigurations using TrendMicro Vision One TMAS",
+  "owner": {
+    "name": "Justin Perkins"
+  },
+  "plugins": [
+    {
+      "name": "trendai-security",
+      "description": "Scan code for vulnerabilities, secrets, malware, and IaC misconfigurations using TrendMicro Vision One TMAS",
+      "version": "1.0.0",
+      "author": {
+        "name": "Justin Perkins"
+      },
+      "source": "./",
+      "category": "security"
+    }
+  ]
+}

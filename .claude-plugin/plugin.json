@@ -1,6 +1,7 @@
 {
   "name": "trendai-security",
   "description": "TrendAI Security Scanner - Scan code for vulnerabilities, secrets, malware, and IaC misconfigurations using TrendMicro Vision One TMAS",
+  "version": "1.0.0",
   "author": {
     "name": "Justin Perkins"
   }
