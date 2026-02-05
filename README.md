@@ -7,11 +7,7 @@ Scan your code for **vulnerabilities**, **secrets**, **malware**, and **IaC misc
 ## Quick Install
 
 ```bash
-# Step 1: Add the marketplace
-claude plugin marketplace add github:JustinDPerkins/TrendAI-Claude-Skill
-
-# Step 2: Install the plugin
-claude plugin install trendai-security
+claude plugin marketplace add JustinDPerkins/TrendAI-Claude-Skill && claude plugin install trendai-security
 ```
 
 Then restart Claude Code for the plugin to load.
@@ -70,22 +66,13 @@ source ~/.zshrc  # or ~/.bashrc
 
 ## Usage
 
-Once configured, use the `/trendai-scan` command:
+Once configured, use these commands:
 
-```
-/trendai-scan                     # Scan current directory
-/trendai-scan ./src               # Scan specific directory
-/trendai-scan ./package.json      # Scan specific file
-```
-
-### Scan Types
-
-| Target | Command |
-|--------|---------|
-| Directory | `/trendai-scan /path/to/dir` |
-| File | `/trendai-scan /path/to/file` |
-| Docker image | Ask Claude to scan `docker:image:tag` |
-| Container registry | Ask Claude to scan `registry:image:tag` |
+| Command | Description |
+|---------|-------------|
+| `/trendai-scan-tmas` | Scan code for vulnerabilities and secrets |
+| `/trendai-scan-iac` | Scan Terraform/CloudFormation for misconfigurations |
+| `/trendai-scan-llm` | Scan LLM endpoints for prompt injection |
 
 ### What It Detects
 
