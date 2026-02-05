@@ -49,7 +49,14 @@ if [ "$TF_COUNT" -gt 0 ]; then
     -F "file=@/tmp/tf-scan.zip" 2>/dev/null)
 
   echo "Terraform scan complete"
-  echo "$TF_RESULT" | jq -r '.scanResults // [] | .[] | select(.status != "SUCCESS") | "[\(.riskLevel // "MEDIUM")] \(.ruleId): \(.ruleTitle // .description) | Resource: \(.resourceId // "unknown")"' 2>/dev/null
+
+  # Check for API errors
+  if echo "$TF_RESULT" | jq -e '.error' >/dev/null 2>&1; then
+    echo "ERROR: $(echo "$TF_RESULT" | jq -r '.error.message // .error')"
+  else
+    # Show all findings - the API returns riskLevel for each check
+    echo "$TF_RESULT" | jq -r '.scanResults // [] | .[] | "[\(.riskLevel)] \(.ruleId): \(.ruleTitle) | Resource: \(.resourceId) | \(.description)"' 2>/dev/null
+  fi
   echo ""
 fi
 
@@ -67,7 +74,13 @@ if [ "$CFN_COUNT" -gt 0 ]; then
       -H "Content-Type: application/json" \
       -d "{\"type\": \"cloudformation-template\", \"content\": $CONTENT}" 2>/dev/null)
 
-    echo "$CFN_RESULT" | jq -r --arg f "$f" '.scanResults // [] | .[] | select(.status != "SUCCESS") | "[\(.riskLevel // "MEDIUM")] \(.ruleId): \(.ruleTitle // .description) | File: \($f) | Resource: \(.resourceId // "unknown")"' 2>/dev/null
+    # Check for API errors
+    if echo "$CFN_RESULT" | jq -e '.error' >/dev/null 2>&1; then
+      echo "ERROR: $(echo "$CFN_RESULT" | jq -r '.error.message // .error')"
+    else
+      # Show all findings
+      echo "$CFN_RESULT" | jq -r --arg f "$f" '.scanResults // [] | .[] | "[\(.riskLevel)] \(.ruleId): \(.ruleTitle) | File: \($f) | Resource: \(.resourceId) | \(.description)"' 2>/dev/null
+    fi
   done
   echo ""
 fi
