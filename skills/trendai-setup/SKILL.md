@@ -10,7 +10,19 @@ Configure the TrendAI Security Scanner with API credentials and install required
 
 ## Setup Flow
 
-### Step 1: Ask for Vision One API Key
+### Step 1: Detect Operating System
+
+First, detect the OS to use appropriate commands:
+
+```bash
+uname -s 2>/dev/null || echo "Windows"
+```
+
+- **Darwin** = macOS
+- **Linux** = Linux
+- **MINGW**/MSYS*/CYGWIN* or command fails = Windows (Git Bash)
+
+### Step 2: Ask for Vision One API Key
 
 Use AskUserQuestion to ask the user for their Vision One API token:
 
@@ -28,7 +40,7 @@ If they need to create one, tell them:
    - **Artifact Security** (for TMAS vulnerability/secret scanning)
 4. Copy the token
 
-### Step 2: Ask for Vision One Region
+### Step 3: Ask for Vision One Region
 
 Use AskUserQuestion to ask which region they use:
 
@@ -40,9 +52,11 @@ Use AskUserQuestion to ask which region they use:
 - "Japan (api.xdr.trendmicro.co.jp)"
 - "Singapore (api.sg.xdr.trendmicro.com)"
 
-### Step 3: Save Configuration
+### Step 4: Save Configuration
 
-After getting the API key and region, tell the user to add these to their shell profile (~/.zshrc or ~/.bashrc):
+#### macOS/Linux
+
+Tell the user to add these to their shell profile (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
 # TrendAI Security Scanner Configuration
@@ -55,15 +69,39 @@ Then run:
 source ~/.zshrc  # or ~/.bashrc
 ```
 
-### Step 4: Install TMAS CLI
+#### Windows (Git Bash)
 
-Check if TMAS is installed:
+On Windows, use `setx` for persistence AND `export` for current session:
 
+```bash
+# Set for future sessions (persistent)
+setx TMAS_API_KEY "<their-api-key>"
+setx V1_REGION "<their-region-endpoint>"
+
+# Set for current session
+export TMAS_API_KEY="<their-api-key>"
+export V1_REGION="<their-region-endpoint>"
+```
+
+**Note**: `setx` saves for future sessions but does NOT update the current session. The `export` commands are needed for immediate use.
+
+### Step 5: Install TMAS CLI
+
+#### Check if TMAS is installed
+
+**macOS/Linux:**
 ```bash
 ~/.local/bin/tmas version 2>/dev/null || echo "NOT_INSTALLED"
 ```
 
-If not installed, run:
+**Windows (Git Bash):**
+```bash
+"$HOME/.local/bin/tmas.exe" version 2>/dev/null || echo "NOT_INSTALLED"
+```
+
+#### Install TMAS
+
+**macOS/Linux:**
 
 ```bash
 OS=$(uname -s)
@@ -88,15 +126,53 @@ chmod +x ~/.local/bin/tmas
 ~/.local/bin/tmas version
 ```
 
-### Step 5: Verify Setup
+**Windows (Git Bash):**
 
-Run verification:
+```bash
+# Create install directory
+mkdir -p "$HOME/.local/bin"
 
+# Download TMAS CLI for Windows
+curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Windows_x86_64.zip -o "$HOME/tmas.zip"
+
+# Extract using PowerShell (with execution policy bypass)
+powershell -ExecutionPolicy Bypass -Command "Expand-Archive -Force -Path '$HOME/tmas.zip' -DestinationPath '$HOME/.local/bin'"
+
+# Verify installation (use forward slashes and quotes)
+"$HOME/.local/bin/tmas.exe" version
+
+# Clean up
+rm "$HOME/tmas.zip"
+```
+
+**Important Windows notes:**
+- Use `$HOME` instead of `%USERPROFILE%` (Git Bash doesn't expand Windows env vars)
+- Use forward slashes (`/`) not backslashes (`\`) for paths
+- Quote paths containing spaces
+- Use `-ExecutionPolicy Bypass` with PowerShell commands
+
+### Step 6: Verify Setup
+
+**macOS/Linux:**
 ```bash
 echo "=== TrendAI Setup Verification ==="
 echo ""
 echo "TMAS CLI:"
 ~/.local/bin/tmas version 2>/dev/null && echo "OK" || echo "NOT INSTALLED"
+echo ""
+echo "API Key:"
+[ -n "$TMAS_API_KEY" ] && echo "Configured (${#TMAS_API_KEY} chars)" || echo "NOT SET"
+echo ""
+echo "Region:"
+echo "${V1_REGION:-api.xdr.trendmicro.com (default)}"
+```
+
+**Windows (Git Bash):**
+```bash
+echo "=== TrendAI Setup Verification ==="
+echo ""
+echo "TMAS CLI:"
+"$HOME/.local/bin/tmas.exe" version 2>/dev/null && echo "OK" || echo "NOT INSTALLED"
 echo ""
 echo "API Key:"
 [ -n "$TMAS_API_KEY" ] && echo "Configured (${#TMAS_API_KEY} chars)" || echo "NOT SET"
@@ -113,3 +189,17 @@ When setup is complete, tell the user:
 - `/trendai-scan-tmas` - Scan for vulnerabilities and secrets
 - `/trendai-scan-iac` - Scan Terraform/CloudFormation for misconfigs
 - `/trendai-scan-llm` - Test LLM endpoints for prompt injection
+
+### For LLM Scanning
+
+If the user plans to use `/trendai-scan-llm`, they also need to set `TARGET_API_KEY`:
+
+```bash
+# The API key for the LLM endpoint being scanned (separate from TMAS_API_KEY)
+export TARGET_API_KEY="your-llm-endpoint-api-key"
+```
+
+On Windows, also run:
+```bash
+setx TARGET_API_KEY "your-llm-endpoint-api-key"
+```

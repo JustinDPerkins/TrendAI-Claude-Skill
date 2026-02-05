@@ -44,6 +44,22 @@ curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cl
 curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Linux_arm64.tar.gz -o /tmp/tmas.tar.gz && tar -xzf /tmp/tmas.tar.gz -C ~/.local/bin && chmod +x ~/.local/bin/tmas
 ```
 
+**Windows (Git Bash):**
+
+```bash
+# Create directory
+mkdir -p "$HOME/.local/bin"
+
+# Download
+curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Windows_x86_64.zip -o "$HOME/tmas.zip"
+
+# Extract (using PowerShell)
+powershell -ExecutionPolicy Bypass -Command "Expand-Archive -Force -Path '$HOME/tmas.zip' -DestinationPath '$HOME/.local/bin'"
+
+# Verify
+"$HOME/.local/bin/tmas.exe" version
+```
+
 **2. Get a Vision One API Key**
 
 1. Log in to [Trend Vision One](https://portal.xdr.trendmicro.com)
@@ -53,7 +69,7 @@ curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cl
 
 **3. Set Environment Variable**
 
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
+**macOS/Linux:** Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
 export TMAS_API_KEY="your-api-key-here"
@@ -62,6 +78,16 @@ export TMAS_API_KEY="your-api-key-here"
 Then reload your shell:
 ```bash
 source ~/.zshrc  # or ~/.bashrc
+```
+
+**Windows (Git Bash):**
+
+```bash
+# Persistent (future sessions)
+setx TMAS_API_KEY "your-api-key-here"
+
+# Current session
+export TMAS_API_KEY="your-api-key-here"
 ```
 
 ## Usage
@@ -74,12 +100,22 @@ Once configured, use these commands:
 | `/trendai-scan-iac` | Scan Terraform/CloudFormation for misconfigurations |
 | `/trendai-scan-llm` | Scan LLM endpoints for prompt injection |
 
+### LLM Scanning
+
+For `/trendai-scan-llm`, you need an additional environment variable:
+
+```bash
+# The API key for the LLM endpoint you're testing (not the Vision One key)
+export TARGET_API_KEY="your-llm-endpoint-api-key"
+```
+
 ### What It Detects
 
 - **Vulnerabilities** - CVEs in dependencies with CVSS scores and remediation
 - **Secrets** - API keys, passwords, tokens, certificates
 - **Malware** - Malicious code in container images
 - **IaC Misconfigurations** - Security issues in Terraform/CloudFormation
+- **LLM Vulnerabilities** - Prompt injection, jailbreaks, system prompt leakage
 
 ## Requirements
 
