@@ -1,94 +1,115 @@
 ---
 name: trendai-setup
-description: Set up the TrendAI Security Scanner by installing TMAS CLI and configuring the API key. Run this after installing the plugin.
-allowed-tools: Bash
+description: Set up the TrendAI Security Scanner - configure API key, region, and install TMAS CLI.
+allowed-tools: Bash, AskUserQuestion
 ---
 
 # TrendAI Setup Assistant
 
-Help users set up the TrendAI Security Scanner by checking and installing prerequisites.
+Configure the TrendAI Security Scanner with API credentials and install required tools.
 
-## Steps
+## Setup Flow
 
-### 1. Check if TMAS is installed
+### Step 1: Ask for Vision One API Key
 
-```bash
-which tmas || ~/.local/bin/tmas version 2>/dev/null
-```
+Use AskUserQuestion to ask the user for their Vision One API token:
 
-### 2. If TMAS is not installed, install it
+**Question**: "Enter your Vision One API Key"
+**Header**: "API Key"
+**Options**:
+- "I have my API key ready" - User will paste it
+- "I need to create one" - Guide them to Vision One console
 
-Detect the platform and install appropriately:
-
-```bash
-# Detect platform
-OS=$(uname -s)
-ARCH=$(uname -m)
-
-# Install based on platform
-if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
-    # macOS Apple Silicon
-    mkdir -p ~/.local/bin
-    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Darwin_arm64.zip -o /tmp/tmas.zip
-    unzip -o /tmp/tmas.zip -d ~/.local/bin
-    chmod +x ~/.local/bin/tmas
-elif [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
-    # macOS Intel
-    mkdir -p ~/.local/bin
-    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Darwin_x86_64.zip -o /tmp/tmas.zip
-    unzip -o /tmp/tmas.zip -d ~/.local/bin
-    chmod +x ~/.local/bin/tmas
-elif [ "$OS" = "Linux" ] && [ "$ARCH" = "x86_64" ]; then
-    # Linux x86_64
-    mkdir -p ~/.local/bin
-    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Linux_x86_64.tar.gz -o /tmp/tmas.tar.gz
-    tar -xzf /tmp/tmas.tar.gz -C ~/.local/bin
-    chmod +x ~/.local/bin/tmas
-elif [ "$OS" = "Linux" ] && [ "$ARCH" = "aarch64" ]; then
-    # Linux ARM64
-    mkdir -p ~/.local/bin
-    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Linux_arm64.tar.gz -o /tmp/tmas.tar.gz
-    tar -xzf /tmp/tmas.tar.gz -C ~/.local/bin
-    chmod +x ~/.local/bin/tmas
-fi
-```
-
-### 3. Check if API key is set
-
-```bash
-if [ -n "$TMAS_API_KEY" ]; then
-    echo "TMAS_API_KEY is configured"
-else
-    echo "TMAS_API_KEY is NOT set"
-fi
-```
-
-### 4. If API key is not set, guide the user
-
-Tell them:
-
+If they need to create one, tell them:
 1. Log in to [Trend Vision One](https://portal.xdr.trendmicro.com)
 2. Go to **Administration** > **API Keys**
-3. Create a new API key with **Cloud Security Operations** permissions
-4. Add to their shell profile:
+3. Create a new API key with these permissions:
+   - **Cloud Security** > **Cloud Posture** (for IaC scanning)
+   - **Artifact Security** (for TMAS vulnerability/secret scanning)
+4. Copy the token
+
+### Step 2: Ask for Vision One Region
+
+Use AskUserQuestion to ask which region they use:
+
+**Question**: "Which Vision One region are you using?"
+**Header**: "Region"
+**Options**:
+- "US (api.xdr.trendmicro.com)"
+- "EU (api.eu.xdr.trendmicro.com)"
+- "Japan (api.xdr.trendmicro.co.jp)"
+- "Singapore (api.sg.xdr.trendmicro.com)"
+
+### Step 3: Save Configuration
+
+After getting the API key and region, tell the user to add these to their shell profile (~/.zshrc or ~/.bashrc):
 
 ```bash
-export TMAS_API_KEY="your-api-key-here"
+# TrendAI Security Scanner Configuration
+export TMAS_API_KEY="<their-api-key>"
+export V1_REGION="<their-region-endpoint>"
 ```
 
-Then reload:
+Then run:
 ```bash
 source ~/.zshrc  # or ~/.bashrc
 ```
 
-### 5. Verify setup
+### Step 4: Install TMAS CLI
 
-Once both are configured, run a quick verification:
+Check if TMAS is installed:
 
 ```bash
+~/.local/bin/tmas version 2>/dev/null || echo "NOT_INSTALLED"
+```
+
+If not installed, run:
+
+```bash
+OS=$(uname -s)
+ARCH=$(uname -m)
+mkdir -p ~/.local/bin
+
+if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
+    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Darwin_arm64.zip -o /tmp/tmas.zip
+    unzip -o /tmp/tmas.zip -d ~/.local/bin
+elif [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
+    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Darwin_x86_64.zip -o /tmp/tmas.zip
+    unzip -o /tmp/tmas.zip -d ~/.local/bin
+elif [ "$OS" = "Linux" ] && [ "$ARCH" = "x86_64" ]; then
+    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Linux_x86_64.tar.gz -o /tmp/tmas.tar.gz
+    tar -xzf /tmp/tmas.tar.gz -C ~/.local/bin
+elif [ "$OS" = "Linux" ]; then
+    curl -L https://cli.artifactscan.cloudone.trendmicro.com/tmas-cli/latest/tmas-cli_Linux_arm64.tar.gz -o /tmp/tmas.tar.gz
+    tar -xzf /tmp/tmas.tar.gz -C ~/.local/bin
+fi
+
+chmod +x ~/.local/bin/tmas
 ~/.local/bin/tmas version
+```
+
+### Step 5: Verify Setup
+
+Run verification:
+
+```bash
+echo "=== TrendAI Setup Verification ==="
+echo ""
+echo "TMAS CLI:"
+~/.local/bin/tmas version 2>/dev/null && echo "OK" || echo "NOT INSTALLED"
+echo ""
+echo "API Key:"
+[ -n "$TMAS_API_KEY" ] && echo "Configured (${#TMAS_API_KEY} chars)" || echo "NOT SET"
+echo ""
+echo "Region:"
+echo "${V1_REGION:-api.xdr.trendmicro.com (default)}"
 ```
 
 ## Success Message
 
-When setup is complete, inform the user they can now use `/trendai-scan` to scan their code for security issues.
+When setup is complete, tell the user:
+
+**Setup Complete!** You can now use these commands:
+- `/trendai-scan-tmas` - Scan for vulnerabilities and secrets
+- `/trendai-scan-iac` - Scan Terraform/CloudFormation for misconfigs
+- `/trendai-scan-llm` - Test LLM endpoints for prompt injection
