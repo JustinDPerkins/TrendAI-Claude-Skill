@@ -1,5 +1,7 @@
 # TrendAI Security Scanner for Claude Code
 
+> **Disclaimer:** This is an unofficial community project and is not officially supported by TrendAI. Use at your own discretion.
+
 Scan your code for **vulnerabilities**, **secrets**, **malware**, and **IaC misconfigurations** using TrendMicro Vision One directly from Claude Code.
 
 ## Quick Install
