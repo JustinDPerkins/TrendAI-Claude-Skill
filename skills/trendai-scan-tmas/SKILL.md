@@ -1,8 +1,8 @@
 ---
-name: trendai-scan
-description: Scan code for vulnerabilities and secrets using TMAS CLI. Use for dependency scanning (package.json, go.mod, etc.), secret detection, and container image scanning.
-argument-hint: [file-or-directory-or-image]
-allowed-tools: Read, Grep, Glob, Bash
+name: trendai-scan-tmas
+description: Scan code for vulnerabilities and secrets using TMAS CLI. Automatically scans current directory for dependencies and secrets.
+argument-hint: [optional-directory-or-image]
+allowed-tools: Bash
 ---
 
 # TrendAI Security Scanner (TMAS)

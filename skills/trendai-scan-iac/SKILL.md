@@ -1,166 +1,93 @@
 ---
 name: trendai-scan-iac
-description: Scan Terraform and CloudFormation templates for security misconfigurations using Vision One Cloud Posture API.
-argument-hint: [directory-or-file]
-allowed-tools: Read, Bash
+description: Scan Terraform and CloudFormation templates for security misconfigurations. Automatically finds and scans all IaC files in the current directory.
+argument-hint: [optional-directory]
+allowed-tools: Bash
 ---
 
 # TrendAI IaC Scanner
 
-Scan **Terraform** and **CloudFormation** templates for security misconfigurations.
+Automatically find and scan all Terraform (.tf) and CloudFormation (.yaml/.yml/.json) files for security misconfigurations.
+
+## How It Works
+
+1. Scans current directory (or specified path) recursively
+2. Finds all .tf files → zips and sends to Terraform API
+3. Finds all CloudFormation files → sends each to CloudFormation API
+4. Reports all findings in a single summary
 
 ## Prerequisites
 
-1. `TMAS_API_KEY` environment variable (Vision One API token with Cloud Posture permissions)
-2. `jq` installed for JSON processing
+- `TMAS_API_KEY` environment variable set
+- `jq` installed
 
-Optional: `V1_REGION` (default: `api.xdr.trendmicro.com`)
+## Run This Script
 
-## IMPORTANT: Batch Scanning
-
-When given a directory, scan ALL IaC files in a single operation:
-- **Terraform**: Zip all `.tf` files together → one API call
-- **CloudFormation**: Combine all templates → one API call per template type
-
-DO NOT prompt for each file individually. Run ONE bash command that handles everything.
-
-## Scan Directory (Recommended)
-
-Use this single command to scan an entire directory:
+Execute this single bash script to scan everything. Replace `TARGET_DIR` with `$ARGUMENTS` if provided, otherwise use `.` (current directory):
 
 ```bash
 #!/bin/bash
-set -e
 TARGET_DIR="${1:-.}"
 V1_REGION="${V1_REGION:-api.xdr.trendmicro.com}"
-RESULTS_FILE="/tmp/iac-scan-results.json"
-echo "[]" > "$RESULTS_FILE"
 
-# Scan Terraform files
-TF_FILES=$(find "$TARGET_DIR" -name "*.tf" -type f 2>/dev/null | head -100)
-if [ -n "$TF_FILES" ]; then
-  echo "Found Terraform files, creating archive..."
+echo "=== TrendAI IaC Security Scan ==="
+echo "Target: $TARGET_DIR"
+echo ""
+
+ALL_RESULTS="[]"
+
+# --- Terraform Scan ---
+TF_COUNT=$(find "$TARGET_DIR" -name "*.tf" -type f 2>/dev/null | wc -l | tr -d ' ')
+if [ "$TF_COUNT" -gt 0 ]; then
+  echo "Found $TF_COUNT Terraform files"
   rm -f /tmp/tf-scan.zip
-  cd "$TARGET_DIR"
-  find . -name "*.tf" -type f | xargs zip -@ /tmp/tf-scan.zip 2>/dev/null
+  (cd "$TARGET_DIR" && find . -name "*.tf" -type f -print0 | xargs -0 zip -@ /tmp/tf-scan.zip) 2>/dev/null
 
-  echo "Scanning Terraform archive..."
   TF_RESULT=$(curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplateArchive" \
     -H "Authorization: Bearer ${TMAS_API_KEY}" \
     -F "type=terraform-archive" \
-    -F "file=@/tmp/tf-scan.zip")
-  echo "$TF_RESULT" | jq -r '.scanResults // []' >> "$RESULTS_FILE"
+    -F "file=@/tmp/tf-scan.zip" 2>/dev/null)
+
+  echo "Terraform scan complete"
+  echo "$TF_RESULT" | jq -r '.scanResults // [] | .[] | select(.status != "SUCCESS") | "[\(.riskLevel // "MEDIUM")] \(.ruleId): \(.ruleTitle // .description) | Resource: \(.resourceId // "unknown")"' 2>/dev/null
+  echo ""
 fi
 
-# Scan CloudFormation files
-CFN_FILES=$(find "$TARGET_DIR" \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" \) -type f 2>/dev/null | xargs grep -l "AWSTemplateFormatVersion\|AWS::" 2>/dev/null | head -50)
-if [ -n "$CFN_FILES" ]; then
-  echo "Found CloudFormation templates..."
+# --- CloudFormation Scan ---
+CFN_FILES=$(find "$TARGET_DIR" \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" \) -type f -exec grep -l -E "(AWSTemplateFormatVersion|AWS::)" {} \; 2>/dev/null)
+CFN_COUNT=$(echo "$CFN_FILES" | grep -c . 2>/dev/null || echo 0)
+if [ "$CFN_COUNT" -gt 0 ]; then
+  echo "Found $CFN_COUNT CloudFormation templates"
+
   for f in $CFN_FILES; do
     echo "Scanning: $f"
     CONTENT=$(cat "$f" | jq -Rs .)
     CFN_RESULT=$(curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplate" \
       -H "Authorization: Bearer ${TMAS_API_KEY}" \
       -H "Content-Type: application/json" \
-      -d "{\"type\": \"cloudformation-template\", \"content\": $CONTENT}")
-    echo "$CFN_RESULT" | jq -r --arg file "$f" '.scanResults // [] | map(. + {file: $file})'
+      -d "{\"type\": \"cloudformation-template\", \"content\": $CONTENT}" 2>/dev/null)
+
+    echo "$CFN_RESULT" | jq -r --arg f "$f" '.scanResults // [] | .[] | select(.status != "SUCCESS") | "[\(.riskLevel // "MEDIUM")] \(.ruleId): \(.ruleTitle // .description) | File: \($f) | Resource: \(.resourceId // "unknown")"' 2>/dev/null
   done
+  echo ""
 fi
 
-echo "Scan complete."
+if [ "$TF_COUNT" -eq 0 ] && [ "$CFN_COUNT" -eq 0 ]; then
+  echo "No IaC files found in $TARGET_DIR"
+fi
+
+echo "=== Scan Complete ==="
 ```
 
-## Scan Single File
+## After Running
 
-### Terraform (.tf)
-```bash
-V1_REGION="${V1_REGION:-api.xdr.trendmicro.com}"
-DIR=$(dirname "$FILE")
-cd "$DIR" && zip -j /tmp/tf-scan.zip *.tf
-curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplateArchive" \
-  -H "Authorization: Bearer ${TMAS_API_KEY}" \
-  -F "type=terraform-archive" \
-  -F "file=@/tmp/tf-scan.zip"
-```
+Parse the output and present findings grouped by severity:
+- VERY_HIGH / CRITICAL first
+- HIGH second
+- MEDIUM/LOW last
 
-### CloudFormation (.yaml/.yml/.json)
-```bash
-V1_REGION="${V1_REGION:-api.xdr.trendmicro.com}"
-curl -s -X POST "https://${V1_REGION}/beta/cloudPosture/scanTemplate" \
-  -H "Authorization: Bearer ${TMAS_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d "{\"type\": \"cloudformation-template\", \"content\": $(cat "$FILE" | jq -Rs .)}"
-```
-
-## Response Format
-
-```json
-{
-  "scanResults": [
-    {
-      "ruleId": "AWS-S3-001",
-      "ruleTitle": "S3 bucket encryption not enabled",
-      "riskLevel": "HIGH",
-      "status": "FAILURE",
-      "resourceId": "aws_s3_bucket.data",
-      "resolutionReferenceLink": "https://..."
-    }
-  ]
-}
-```
-
-Only report findings where `status` is `FAILURE`.
-
-## Workflow
-
-1. Check target is file or directory
-2. If directory: Run batch scan script above (ONE bash command)
-3. If file: Detect type and run single-file scan
-4. Collect all results and present summary
-
-## Output Format
-
-```
-## IaC Security Scan Results
-
-**Target**: /path/to/infrastructure
-**Files Scanned**: 12 Terraform, 3 CloudFormation
-**Scanned**: 2026-02-05
-
-### Summary
-| Severity | Count |
-|----------|-------|
-| Critical | 1 |
-| High | 5 |
-| Medium | 8 |
-| Low | 3 |
-
-### Critical/High Findings
-
-#### [CRITICAL] AWS-IAM-001: IAM policy allows *
-- **File**: iam.tf
-- **Resource**: aws_iam_policy.admin
-- **Fix**: Restrict to specific resources
-
-#### [HIGH] AWS-S3-001: S3 bucket not encrypted
-- **File**: s3.tf
-- **Resource**: aws_s3_bucket.data
-- **Fix**: Add server_side_encryption_configuration
-
-### Medium/Low Findings
-(list remaining...)
-```
-
-## Vision One Regions
-
-| Region | Endpoint |
-|--------|----------|
-| US | api.xdr.trendmicro.com |
-| EU | api.eu.xdr.trendmicro.com |
-| Japan | api.xdr.trendmicro.co.jp |
-| Singapore | api.sg.xdr.trendmicro.com |
-| Australia | api.au.xdr.trendmicro.com |
+Include the rule ID, description, file, and resource for each finding.
 
 ## Target
 
-$ARGUMENTS
+Directory to scan: $ARGUMENTS (defaults to current directory if not specified)
