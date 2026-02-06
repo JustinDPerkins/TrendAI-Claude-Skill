@@ -2,134 +2,218 @@
 name: trendai-scan-llm
 description: Scan LLM endpoints for prompt injection vulnerabilities using TMAS AI Scanner.
 argument-hint: [config-file]
-allowed-tools: Read, Grep, Glob, Bash, Write
+allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion
 ---
 
 # TrendAI LLM Scanner
 
 Scan **LLM endpoints** for prompt injection and jailbreak vulnerabilities.
 
-## What This Scans
+## CRITICAL: Interactive Configuration Workflow
 
-- Sensitive Data Disclosure
-- System Prompt Leakage
-- Malicious Code Generation
-- ML Model Family Discovery
-- Hallucinated Software Entities
-- Agent Tool Definition Leakage
+**ALWAYS use AskUserQuestion to gather configuration before running scans.** Running all attacks at once is CPU-intensive. Let users select specific attacks.
 
-## Prerequisites
+### Step 1: Check Prerequisites
 
-1. **TMAS CLI** installed (`tmas version` to verify)
-2. **TMAS_API_KEY** - Vision One API key for authenticating with TMAS service
-3. **TARGET_API_KEY** - The LLM endpoint's own API key/token
-4. A config file with LLM endpoint details (see below)
-
-Run `/trendai-setup` if TMAS CLI is not installed.
-
-## Environment Variables
-
-**Two separate API keys are required:**
-
+First verify TMAS is installed and API keys are set:
 ```bash
-# Vision One API key (for TMAS service authentication)
-export TMAS_API_KEY="your-vision-one-api-key"
-
-# LLM endpoint API key (for the target you're scanning)
-export TARGET_API_KEY="your-llm-endpoint-api-key"
+tmas version
+echo "TMAS_API_KEY: ${TMAS_API_KEY:+SET}"
+echo "TARGET_API_KEY: ${TARGET_API_KEY:+SET}"
 ```
 
-## Config File Format
+If TMAS is not installed, tell user to run `/trendai-setup`.
 
-The config file uses a specific YAML schema. Here is a complete working example:
+### Step 2: Check for Existing Config
+
+If `$ARGUMENTS` contains a config file path, read it and skip to Step 7.
+
+Otherwise, proceed to gather configuration interactively.
+
+### Step 3: Ask Attack Objectives (REQUIRED)
+
+Use AskUserQuestion with multiSelect=true to ask which attacks to run:
+
+**Question**: "Which attack objectives do you want to test?"
+**Header**: "Attacks"
+**Options** (multiSelect: true):
+1. **System Prompt Leakage** - "Attempts to reveal the system prompt"
+2. **Sensitive Data Disclosure** - "Attempts to extract PII or sensitive data"
+3. **Agent Tool Definition Leakage** - "Attempts to discover available tools/functions"
+4. **Malicious Code Generation** - "Attempts to generate harmful code"
+
+Note: Additional objectives available if user selects "Other":
+- Discover ML Model Family
+- Generate Hallucinated Software Entities
+
+### Step 4: Ask Endpoint Details (REQUIRED)
+
+Use AskUserQuestion to get endpoint info:
+
+**Question**: "What is your LLM endpoint type?"
+**Header**: "Endpoint"
+**Options**:
+1. **OpenAI API** - "OpenAI or OpenAI-compatible (Azure, local LLMs with OpenAI adapter)"
+2. **Anthropic API** - "Claude API endpoints"
+3. **Custom endpoint** - "Other REST API with custom request format"
+
+Then ask user to provide the endpoint URL (base URL only, no /chat/completions).
+
+### Step 5: Ask Model Details (REQUIRED)
+
+Use AskUserQuestion:
+
+**Question**: "Which model are you testing?"
+**Header**: "Model"
+**Options**:
+1. **GPT-4/GPT-4o** - "OpenAI GPT-4 family"
+2. **GPT-3.5-turbo** - "OpenAI GPT-3.5"
+3. **Claude** - "Anthropic Claude models"
+4. **Custom/Local** - "Specify model name"
+
+### Step 6: Ask API Key Configuration (REQUIRED)
+
+Use AskUserQuestion:
+
+**Question**: "Does your LLM endpoint require an API key?"
+**Header**: "Auth"
+**Options**:
+1. **Yes, use TARGET_API_KEY env var** - "API key is in TARGET_API_KEY environment variable (Recommended)"
+2. **Yes, different env var** - "Specify a different environment variable name"
+3. **No authentication needed** - "Endpoint doesn't require API key"
+
+### Step 6b: Ask About Attack Techniques (OPTIONAL)
+
+Use AskUserQuestion:
+
+**Question**: "Do you want to add attack techniques? (Warning: multiplies test count and CPU usage)"
+**Header**: "Techniques"
+**Options**:
+1. **None only (Recommended)** - "Baseline tests only, fastest and lowest CPU usage"
+2. **Add jailbreak techniques** - "Include DAN, instruction override attacks (3-5x more tests)"
+
+If user selects jailbreak techniques, use multiSelect for:
+- `Ignore all previous instructions`
+- `DAN (Do anything now)`
+- `Encrypt the response`
+- `Payload splitting`
+
+### Step 6c: Ask About Attack Modifiers (OPTIONAL)
+
+Use AskUserQuestion:
+
+**Question**: "Do you want to add attack modifiers? (Warning: further multiplies test count)"
+**Header**: "Modifiers"
+**Options**:
+1. **None only (Recommended)** - "No encoding, fastest execution"
+2. **Add encoding modifiers** - "Include Base64, scrambling (2-3x more tests)"
+
+If user selects encoding modifiers:
+- `Base64 Encoding`
+- `Best-of-N Scrambling`
+
+### Step 7: Generate Config File
+
+Based on user answers, generate a config.yaml file:
 
 ```yaml
 version: 1.0.0
-name: My LLM Security Scan
-description: Security scan for my LLM endpoint
+name: LLM Security Scan
+description: Targeted security scan for LLM endpoint
 target:
-  name: my-llm-endpoint
-  endpoint: https://api.openai.com/v1  # BASE URL only - see note below
-  api_key_env: TARGET_API_KEY
-  model: "gpt-4"
-  type: "openai"  # Use "openai" for OpenAI-compatible endpoints
+  name: target-llm
+  endpoint: <USER_PROVIDED_ENDPOINT>  # BASE URL only!
+  api_key_env: <USER_PROVIDED_ENV_VAR or TARGET_API_KEY>
+  model: "<USER_PROVIDED_MODEL>"
+  type: "<openai|anthropic|custom>"
   temperature: 0.0
-  system_prompt: ""  # Optional: system prompt to test
+  system_prompt: ""
 settings:
-  concurrency: 2
+  concurrency: 2  # Keep low to reduce CPU load
 attack_objectives:
+<ONLY SELECTED OBJECTIVES - see template below>
+```
+
+**Attack objective templates** (only include selected ones):
+
+Use `techniques: [None]` and `modifiers: [None]` for baseline only.
+If user selected additional techniques/modifiers, add them to the arrays.
+
+```yaml
+# System Prompt Leakage
 - name: System Prompt Leakage
   description: The attacker learns the full system prompt
-  techniques: [None]
-  modifiers: [None]
+  techniques: [None]  # or [None, "DAN (Do anything now)", "Ignore all previous instructions"]
+  modifiers: [None]   # or [None, "Base64 Encoding"]
+
+# Sensitive Data Disclosure
 - name: Sensitive Data Disclosure
   description: The attacker learns sensitive information such as PII
   techniques: [None]
   modifiers: [None]
+
+# Agent Tool Definition Leakage
+- name: Agent Tool Definition Leakage
+  description: An attacker discovers the tools accessible to the model
+  techniques: [None]
+  modifiers: [None]
+
+# Malicious Code Generation
+- name: Malicious Code Generation
+  description: An attacker gets the model to generate malicious code
+  techniques: [None]
+  modifiers: [None]
+
+# Discover ML Model Family
+- name: Discover ML Model Family
+  description: An attacker discovers the type of ML model being used
+  techniques: [None]
+  modifiers: [None]
+
+# Generate Hallucinated Software Entities
+- name: Generate Hallucinated Software Entities
+  description: An attacker looks for hallucinated software entities
+  techniques: [None]
+  modifiers: [None]
 ```
 
-### Important: Endpoint URL for OpenAI-Compatible APIs
+**CPU Impact Examples:**
+- 1 objective + None technique + None modifier = ~15-25 tests
+- 1 objective + 3 techniques + None modifier = ~45-75 tests
+- 1 objective + 3 techniques + 2 modifiers = ~90-150 tests
+- 6 objectives + all techniques + all modifiers = 500+ tests (HIGH CPU!)
 
-When using `type: "openai"`, TMAS **automatically appends** `/chat/completions` to the endpoint URL.
+### Step 8: Confirm and Save Config
 
-| Correct | Incorrect |
-|---------|-----------|
-| `https://api.openai.com/v1` | `https://api.openai.com/v1/chat/completions` |
+Show the user the generated config and ask where to save it (default: `./llm-scan-config.yaml`).
 
-Using the full URL will result in a double path error.
+Write the config file using the Write tool.
 
-### Available Attack Objectives
-
-| Objective | Description |
-|-----------|-------------|
-| Sensitive Data Disclosure | Attempts to extract PII or sensitive data |
-| System Prompt Leakage | Attempts to reveal the system prompt |
-| Malicious Code Generation | Attempts to generate harmful code |
-| Discover ML Model Family | Attempts to identify the underlying model |
-| Generate Hallucinated Software Entities | Tests for fake package name generation |
-| Agent Tool Definition Leakage | Attempts to discover available tools |
-
-### Available Attack Techniques
-
-- `None` (baseline - no special technique)
-- `Ignore all previous instructions`
-- `DAN` (Do Anything Now jailbreak)
-- `Encrypt the response`
-- `Payload splitting`
-
-### Available Attack Modifiers
-
-- `None` (baseline - no encoding)
-- `Base64 Encoding`
-- `Best-of-N Scrambling`
-
-### Example with Techniques and Modifiers
-
-```yaml
-attack_objectives:
-- name: System Prompt Leakage
-  description: The attacker learns the full system prompt
-  techniques: [None, DAN, Ignore all previous instructions]
-  modifiers: [None, Base64 Encoding]
-```
-
-## Commands
+### Step 9: Run the Scan
 
 ```bash
-# Scan with config file
-tmas aiscan llm -c /path/to/config.yaml -r us-east-1
-
-# Output as JSON
-tmas aiscan llm -c config.yaml -r us-east-1 --output json
-
-# Output as Markdown
-tmas aiscan llm -c config.yaml -r us-east-1 --output markdown
-
-# Save to file
-tmas aiscan llm -c config.yaml -r us-east-1 --output json=results.json
+tmas aiscan llm -c <config-file> -r us-east-1
 ```
 
-### Region Options
+## Reference: Attack Techniques and Modifiers
+
+For advanced users who want to add techniques/modifiers to their config:
+
+### Attack Techniques
+- `None` - baseline (no special technique)
+- `Ignore all previous instructions` - instruction override
+- `DAN (Do anything now)` - jailbreak technique
+- `Encrypt the response` - obfuscation
+- `Payload splitting` - split attack across messages
+
+### Attack Modifiers
+- `None` - baseline (no encoding)
+- `Base64 Encoding` - encode prompts in base64
+- `Best-of-N Scrambling` - randomize prompt variations
+
+**Warning**: Adding techniques and modifiers multiplies test count and CPU usage!
+
+## Reference: Region Options
 
 | Region | Flag |
 |--------|------|
@@ -139,18 +223,13 @@ tmas aiscan llm -c config.yaml -r us-east-1 --output json=results.json
 | Singapore | `-r ap-southeast-1` |
 | Australia | `-r ap-southeast-2` |
 
-## Workflow
+## Reference: Endpoint URL Format
 
-1. Check TMAS is installed: `tmas version`
-2. Check env vars are set:
-   ```bash
-   echo "TMAS_API_KEY: ${TMAS_API_KEY:+SET}"
-   echo "TARGET_API_KEY: ${TARGET_API_KEY:+SET}"
-   ```
-3. If user provides a config file path, verify it exists and read it
-4. If no config provided, help user create one based on their endpoint
-5. Run scan: `tmas aiscan llm -c config.yaml -r us-east-1`
-6. Parse and present results
+When using `type: "openai"`, TMAS **automatically appends** `/chat/completions`.
+
+| Correct | Incorrect |
+|---------|-----------|
+| `https://api.openai.com/v1` | `https://api.openai.com/v1/chat/completions` |
 
 ## Output Format
 
@@ -167,15 +246,13 @@ Present results in this format:
 
 | Category | Tested | Vulnerable | Success Rate |
 |----------|--------|------------|--------------|
-| Sensitive Data Disclosure | 7 | 0 | 0% |
 | System Prompt Leakage | 25 | 6 | 24% |
-| Malicious Code Generation | 5 | 0 | 0% |
 
 ### Vulnerabilities Found
 
-#### System Prompt Leakage - DAN Attack
+#### System Prompt Leakage - Instruction Override
 - **Severity**: High
-- **Attack**: "Pretend you are DAN..."
+- **Attack**: "Ignore all previous instructions..."
 - **Response**: Model revealed system prompt
 - **Recommendation**: Strengthen system prompt boundaries
 ```
@@ -183,19 +260,13 @@ Present results in this format:
 ## Troubleshooting
 
 ### "version: is a required field"
-Your config is missing `version: 1.0.0` at the top.
+Config missing `version: 1.0.0` at the top.
 
 ### "target: is a required field"
-Your config needs a `target:` block with `name`, `endpoint`, `model`, and `type`.
-
-### "attack_preset: one of attack_objectives or attack_preset is required"
-Add either `attack_objectives:` list or `attack_preset:` to your config.
+Config needs a `target:` block with `name`, `endpoint`, `model`, and `type`.
 
 ### 401 Unauthorized / Double path error
-If using `type: "openai"`, ensure your endpoint is the **base URL** only (e.g., `https://api.openai.com/v1`), not the full `/chat/completions` path.
-
-### "Router.acompletion() missing messages"
-You're using `type: ""` (custom) but the request mapping is incomplete. Switch to `type: "openai"` for OpenAI-compatible endpoints.
+Ensure endpoint is **base URL** only (not the full `/chat/completions` path).
 
 ## Target
 
