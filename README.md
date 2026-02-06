@@ -96,6 +96,7 @@ Once configured, use these commands:
 
 | Command | Description |
 |---------|-------------|
+| `/trendai-setup` | Configure API key and install TMAS CLI |
 | `/trendai-scan-tmas` | Scan code for vulnerabilities and secrets |
 | `/trendai-scan-iac` | Scan Terraform/CloudFormation for misconfigurations |
 | `/trendai-scan-llm` | Scan LLM endpoints for prompt injection |
@@ -109,6 +110,23 @@ For `/trendai-scan-llm`, you need an additional environment variable:
 export TARGET_API_KEY="your-llm-endpoint-api-key"
 ```
 
+**Features:**
+- **Drift tracking** - Compares scans over time to show improvement/regression
+- **Scan history** - Results saved to `.trendai-scans/` for trend analysis
+- **Detailed reports** - JSON output with attack prompts and responses
+
+### Regional Configuration
+
+By default, the scanner uses the US region (`api.xdr.trendmicro.com`). For other regions, set:
+
+```bash
+export V1_REGION="api.eu.xdr.trendmicro.com"  # EU
+export V1_REGION="api.au.xdr.trendmicro.com"  # Australia
+export V1_REGION="api.in.xdr.trendmicro.com"  # India
+export V1_REGION="api.jp.xdr.trendmicro.com"  # Japan
+export V1_REGION="api.sg.xdr.trendmicro.com"  # Singapore
+```
+
 ### What It Detects
 
 - **Vulnerabilities** - CVEs in dependencies with CVSS scores and remediation
@@ -119,7 +137,7 @@ export TARGET_API_KEY="your-llm-endpoint-api-key"
 
 ## Requirements
 
-- [Claude Code CLI](https://claude.ai/claude-code)
+- [Claude Code CLI](https://claude.com/product/claude-code)
 - [Trend Vision One account](https://www.trendmicro.com/en_us/business/products/vision-one.html)
 
 ## License
