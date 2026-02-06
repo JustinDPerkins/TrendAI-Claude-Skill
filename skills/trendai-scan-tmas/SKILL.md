@@ -1,131 +1,179 @@
 ---
 name: trendai-scan-tmas
-description: Scan code for vulnerabilities and secrets using TMAS CLI. Automatically scans current directory for dependencies and secrets.
-argument-hint: [optional-directory-or-image]
+description: Scan container images and code for vulnerabilities, secrets, and malware using TMAS CLI. Auto-detects Dockerfiles, image tars, and builds images for scanning.
+argument-hint: [path-or-image] [--advanced]
 allowed-tools: Bash, AskUserQuestion, Read, Write, Glob
 ---
 
 # TrendAI Security Scanner (TMAS)
 
-Scan code for **vulnerabilities**, **secrets**, and **malware** using TrendMicro Artifact Scanner (TMAS).
+Scan **container images** and code for **vulnerabilities**, **secrets**, and **malware**.
 
-## CRITICAL: Interactive Configuration Workflow
+## CRITICAL: Zero-Prompt Auto-Detection
 
-**ALWAYS use AskUserQuestion to gather configuration before running scans.** This ensures the right scan type and options are used.
+**DEFAULT MODE**: Automatically detect artifact type and scan with sensible defaults. NO PROMPTS.
+
+**ADVANCED MODE**: If `$ARGUMENTS` contains `--advanced` or `-a`, then use AskUserQuestion for options.
+
+```bash
+# Check for advanced mode
+if [[ "$ARGUMENTS" == *"--advanced"* ]] || [[ "$ARGUMENTS" == *"-a"* ]]; then
+    ADVANCED_MODE=true
+    # Remove flag from arguments
+    TARGET=$(echo "$ARGUMENTS" | sed 's/--advanced//g' | sed 's/-a//g' | xargs)
+else
+    ADVANCED_MODE=false
+    TARGET="$ARGUMENTS"
+fi
+```
 
 ### Step 1: Check Prerequisites
 
-First verify TMAS is installed and API key is set:
 ```bash
 tmas version
 echo "TMAS_API_KEY: ${TMAS_API_KEY:+SET}"
+docker --version 2>/dev/null || echo "Docker not available"
 ```
 
 If TMAS is not installed, tell user to run `/trendai-setup`.
 
-### Step 2: Determine Target
+### Step 2: Determine Target Path
 
-If `$ARGUMENTS` contains a target path or image, use that. Otherwise, ask the user.
-
-Use AskUserQuestion:
-
-**Question**: "What do you want to scan?"
-**Header**: "Target"
-**Options**:
-1. **Current directory** - "Scan the current working directory for vulnerabilities and secrets"
-2. **Container image** - "Scan a Docker/OCI image for vulnerabilities, secrets, and malware"
-3. **Specific path** - "Scan a specific directory or file"
-4. **Existing SBOM** - "Scan vulnerabilities from a CycloneDX/SPDX SBOM file"
-
-### Step 3: Get Target Details (if needed)
-
-For **Container image**, ask:
-
-**Question**: "Where is the container image?"
-**Header**: "Image Source"
-**Options**:
-1. **Docker daemon** - "Local Docker image (docker:image:tag)"
-2. **Container registry** - "Pull from registry (registry:repo/image:tag)"
-3. **Docker archive** - "Tarball from 'docker save' (docker-archive:path.tar)"
-4. **OCI archive** - "OCI format tarball (oci-archive:path.tar)"
-
-Then ask for the image name/path.
-
-### Step 4: Ask Scan Options
-
-Use AskUserQuestion with multiSelect=true:
-
-**Question**: "Which scans do you want to run?"
-**Header**: "Scans"
-**Options** (multiSelect: true):
-1. **Vulnerabilities (-V)** - "Scan for known CVEs in dependencies (Recommended)"
-2. **Secrets (-S)** - "Scan for hardcoded API keys, passwords, tokens (Recommended)"
-3. **Malware (-M)** - "Scan for malware (container images only)"
-
-### Step 5: Ask Additional Options
-
-Use AskUserQuestion with multiSelect=true:
-
-**Question**: "Do you want any additional options?"
-**Header**: "Options"
-**Options** (multiSelect: true):
-1. **Generate SBOM** - "Save CycloneDX SBOM for compliance (--saveSBOM)"
-2. **Evaluate policy** - "Check against Vision One policy, fail if violated (--evaluatePolicy)"
-3. **Redact secrets** - "Hide secret values in output (--redacted)"
-4. **None** - "Run with default options"
-
-### Step 6: Run the Scan
-
-Build and run the command based on user selections:
+Use `$ARGUMENTS` if provided, otherwise use the current working directory.
 
 ```bash
-# Create scan history directory
-mkdir -p .trendai-scans
-
-# Build scan command
-# Format: tmas scan <artifact-type>:<path-or-image> [flags] -r <region>
-
-# Examples:
-tmas scan dir:. -V -S -r us-east-1                           # Directory
-tmas scan docker:myimage:tag -V -S -M -r us-east-1           # Docker image
-tmas scan registry:nginx:latest -V -S -M -r us-east-1        # Registry image
-tmas scan file:package-lock.json -V -r us-east-1             # Single file
-tmas scan sbom:cyclonedx.json -V -r us-east-1                # Existing SBOM
-
-# Save output to timestamped file for drift tracking
-SCAN_FILE=".trendai-scans/tmas-scan-$(date +%Y%m%d-%H%M%S).json"
-tmas scan <artifact> [flags] -r us-east-1 2>&1 | tee "$SCAN_FILE"
+TARGET="${ARGUMENTS:-.}"
 ```
 
-### Step 7: Parse Results and Generate Report
+### Step 3: Auto-Detect Artifact Type
 
-The output is JSON with this structure:
+Analyze the target to determine what type of scan to run. Check in this order:
+
+```bash
+# Check what we're dealing with
+TARGET_PATH="/path/to/target"
+
+# 1. Is it a container image reference? (contains : but not a file path)
+#    Examples: nginx:latest, myrepo/myimage:v1.0, registry.io/app:tag
+if [[ "$TARGET" =~ ^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*(:[a-zA-Z0-9._-]+)?$ ]] && [[ ! -e "$TARGET" ]]; then
+    echo "DETECTED: Container image reference"
+fi
+
+# 2. Is it a .tar file? (docker-archive or oci-archive)
+ls "$TARGET_PATH"/*.tar 2>/dev/null
+
+# 3. Is there a Dockerfile? (can build and scan)
+ls "$TARGET_PATH"/Dockerfile* 2>/dev/null
+
+# 4. Is there a docker-compose.yml? (extract image names)
+ls "$TARGET_PATH"/docker-compose*.yml 2>/dev/null
+
+# 5. Is it a directory with code? (scan for deps and secrets)
+ls "$TARGET_PATH"/package.json "$TARGET_PATH"/go.mod "$TARGET_PATH"/requirements.txt "$TARGET_PATH"/Gemfile "$TARGET_PATH"/pom.xml "$TARGET_PATH"/build.gradle 2>/dev/null
+```
+
+### Step 4: Execute Based on Detection
+
+#### If: Container Image Reference (e.g., `nginx:latest`, `myapp:v1`)
+```bash
+# Check if image exists locally first
+if docker image inspect "$IMAGE" &>/dev/null; then
+    # Scan from local Docker daemon
+    tmas scan docker:"$IMAGE" -V -S -M -r us-east-1
+else
+    # Pull from registry and scan
+    tmas scan registry:"$IMAGE" -V -S -M -r us-east-1
+fi
+```
+
+#### If: Image Tar File Found (*.tar)
+```bash
+# Detect if it's docker-archive or oci-archive
+# docker-archive has manifest.json at root
+# oci-archive has oci-layout file
+if tar -tf "$TAR_FILE" | grep -q "^manifest.json$"; then
+    tmas scan docker-archive:"$TAR_FILE" -V -S -M -r us-east-1
+elif tar -tf "$TAR_FILE" | grep -q "oci-layout"; then
+    tmas scan oci-archive:"$TAR_FILE" -V -S -M -r us-east-1
+fi
+```
+
+#### If: Dockerfile Found
+
+**Default mode**: Automatically build and scan the image.
+**Advanced mode**: Ask user if they want to build or just scan directory.
+
+```bash
+# Default: Build and scan automatically
+IMAGE_NAME="tmas-scan-$(basename "$TARGET_PATH"):$(date +%s)"
+
+echo "Building image from Dockerfile..."
+docker build -t "$IMAGE_NAME" "$TARGET_PATH"
+
+echo "Scanning image..."
+tmas scan docker:"$IMAGE_NAME" -V -S -M -r us-east-1
+
+# Clean up the temporary image
+docker rmi "$IMAGE_NAME" 2>/dev/null
+```
+
+If `ADVANCED_MODE=true`, use AskUserQuestion:
+- **Question**: "Found Dockerfile. Build and scan, or scan directory only?"
+- **Options**: "Build and scan image" / "Scan directory only"
+
+#### If: docker-compose.yml Found
+
+**Default mode**: Extract all images and scan them sequentially.
+**Advanced mode**: Ask which images to scan.
+
+```bash
+# Extract and scan all images
+for IMAGE in $(grep -E "^\s+image:" docker-compose*.yml | awk '{print $2}'); do
+    echo "Scanning $IMAGE..."
+    tmas scan registry:"$IMAGE" -V -S -M -r us-east-1
+done
+```
+
+#### If: Code Directory (no Docker artifacts)
+
+Scan the directory for vulnerabilities and secrets (no malware - not supported for dirs):
+```bash
+tmas scan dir:"$TARGET_PATH" -V -S -r us-east-1
+```
+
+### Step 5: Run Scan with History Tracking
+
+Always save results for drift tracking:
+
+```bash
+mkdir -p .trendai-scans
+
+# Determine scan type label
+SCAN_TYPE="image"  # or "dir" based on detection
+
+SCAN_FILE=".trendai-scans/tmas-${SCAN_TYPE}-$(date +%Y%m%d-%H%M%S).json"
+
+# Run scan and save
+tmas scan <artifact> -V -S -M -r us-east-1 2>&1 | tee "$SCAN_FILE"
+```
+
+### Step 6: Parse and Report Results
+
+The JSON output structure:
 ```json
 {
   "vulnerabilities": {
-    "totalVulnCount": 5,
-    "criticalCount": 1,
-    "highCount": 2,
-    "mediumCount": 2,
-    "lowCount": 0,
-    "findings": {
-      "package-name": [{
-        "id": "CVE-2024-1234",
-        "severity": "Critical",
-        "fixedInVersion": "1.2.3",
-        "cvss": 9.8
-      }]
-    }
+    "totalVulnCount": 15,
+    "criticalCount": 2,
+    "highCount": 5,
+    "mediumCount": 6,
+    "lowCount": 2,
+    "findings": { ... }
   },
   "secrets": {
-    "totalFilesScanned": 100,
-    "unmitigatedFindingsCount": 2,
-    "findings": {
-      "src/config.js": [{
-        "ruleId": "aws-access-key",
-        "line": 15
-      }]
-    }
+    "totalFilesScanned": 1847,
+    "unmitigatedFindingsCount": 3,
+    "findings": { ... }
   },
   "malware": {
     "scanResult": 0,
@@ -134,158 +182,180 @@ The output is JSON with this structure:
 }
 ```
 
-### Step 8: Compare with Previous Scans (Drift Detection)
+### Step 7: Drift Detection
 
-Check for previous scans to show improvement/regression:
-
+Compare with previous scans:
 ```bash
-# Find previous scans
-ls -t .trendai-scans/tmas-scan-*.json 2>/dev/null | head -5
+# Find previous scans of same type
+PREV_SCAN=$(ls -t .trendai-scans/tmas-${SCAN_TYPE}-*.json 2>/dev/null | sed -n '2p')
+
+if [[ -n "$PREV_SCAN" ]]; then
+    # Compare vulnerability counts
+    echo "Previous scan: $PREV_SCAN"
+fi
 ```
 
-If previous scans exist, compare:
-1. Read the most recent previous scan JSON
-2. Compare vulnerability counts by severity
-3. Compare secrets count
-4. Show drift indicators (↑ improved, ↓ regressed, → unchanged)
+## Detection Priority
 
-## Artifact Types Reference
+| Priority | Artifact | Scan Command | Flags |
+|----------|----------|--------------|-------|
+| 1 | Image reference | `docker:` or `registry:` | `-V -S -M` |
+| 2 | Image tar file | `docker-archive:` or `oci-archive:` | `-V -S -M` |
+| 3 | Dockerfile | Build → `docker:` | `-V -S -M` |
+| 4 | docker-compose.yml | Extract images → scan each | `-V -S -M` |
+| 5 | Code directory | `dir:` | `-V -S` |
 
-| Type | Vulns | Secrets | Malware | Example |
-|------|:-----:|:-------:|:-------:|---------|
-| `dir:` | ✓ | ✓ | - | `dir:/path/to/project` |
-| `file:` | ✓ | ✓ | - | `file:package-lock.json` |
-| `registry:` | ✓ | ✓ | ✓ | `registry:nginx:latest` |
-| `docker:` | ✓ | ✓ | ✓ | `docker:myimage:tag` |
-| `podman:` | ✓ | ✓ | - | `podman:myimage:tag` |
-| `docker-archive:` | ✓ | ✓ | ✓ | `docker-archive:image.tar` |
-| `oci-archive:` | ✓ | ✓ | ✓ | `oci-archive:image.tar` |
-| `oci-dir:` | ✓ | ✓ | ✓ | `oci-dir:/path/to/oci` |
-| `singularity:` | ✓ | ✓ | - | `singularity:image.sif` |
-| `sbom` | ✓ | - | - | `sbom:cyclonedx.json` |
+## Scan Flags by Artifact Type
 
-## Flags Reference
-
-| Flag | Description |
-|------|-------------|
-| `-V, --vulnerabilities` | Scan for known CVEs |
-| `-S, --secrets` | Scan for hardcoded secrets |
-| `-M, --malware` | Scan for malware (images only) |
-| `--saveSBOM` | Save CycloneDX 1.6 SBOM to current directory |
-| `--evaluatePolicy` | Check against Vision One policy (exit code 2 if violated) |
-| `--redacted` | Hide secret values in output |
-| `-o, --override` | Path to override rules YAML file |
-| `--distro` | Distro for vuln matching (e.g., `alpine:3.18`) |
-| `-p, --platform` | Platform for multi-arch images (default: `linux/amd64`) |
-| `-r, --region` | Vision One region |
-
-## Region Options
-
-| Region | Flag |
-|--------|------|
-| US East | `-r us-east-1` |
-| EU (Frankfurt) | `-r eu-central-1` |
-| EU (London) | `-r eu-west-2` |
-| Canada | `-r ca-central-1` |
-| India | `-r ap-south-1` |
-| Japan | `-r ap-northeast-1` |
-| Singapore | `-r ap-southeast-1` |
-| Australia | `-r ap-southeast-2` |
-| Middle East | `-r me-central-1` |
+| Artifact | Vulns (-V) | Secrets (-S) | Malware (-M) |
+|----------|:----------:|:------------:|:------------:|
+| Container images | ✓ | ✓ | ✓ |
+| Directories | ✓ | ✓ | - |
+| Files | ✓ | ✓ | - |
 
 ## Output Format
 
-Present results in this format:
-
 ```markdown
-## Security Scan Results
+## Container Security Scan Results
 
-**Target**: /path/to/project (or image:tag)
+**Image**: myapp:v1.2.3
 **Scan Time**: 2026-02-06 10:15:00
-**Scan ID**: .trendai-scans/tmas-scan-20260206-101500.json
+**Scan File**: .trendai-scans/tmas-image-20260206-101500.json
 
 ---
 
 ### Summary
 
-| Category | Count | Status |
-|----------|-------|--------|
-| Critical | 1 | 🔴 |
-| High | 3 | 🟠 |
-| Medium | 5 | 🟡 |
-| Low | 2 | 🟢 |
-| Secrets | 2 | 🔴 |
-| Malware | 0 | ✅ |
+| Category | Count | Severity |
+|----------|-------|----------|
+| Critical | 2 | 🔴 CRITICAL |
+| High | 5 | 🟠 HIGH |
+| Medium | 6 | 🟡 MEDIUM |
+| Low | 2 | 🟢 LOW |
+| Secrets | 3 | 🔴 SECRETS |
+| Malware | 0 | ✅ CLEAN |
 
 ---
 
-### Security Posture Drift
-
-(Only show if previous scans exist)
+### Drift (vs previous scan)
 
 | Category | Previous | Current | Trend |
 |----------|----------|---------|-------|
-| Critical | 2 | 1 | ↑ Improved |
-| High | 3 | 3 | → Unchanged |
-| Secrets | 1 | 2 | ↓ Regressed |
+| Critical | 3 | 2 | ↑ -1 |
+| High | 5 | 5 | → 0 |
+| Secrets | 1 | 3 | ↓ +2 |
 
 ---
 
-### Critical Vulnerabilities (1)
+### Critical Vulnerabilities (2)
 
-#### CVE-2024-1234 - lodash
-- **Package**: lodash@4.17.20
-- **Severity**: Critical (CVSS 9.8)
-- **Fix**: Update to 4.17.21
-- **Description**: Prototype pollution vulnerability
+#### 1. CVE-2024-1234 - openssl
+- **Package**: openssl 3.0.1
+- **Layer**: /usr/lib/x86_64-linux-gnu/libssl.so
+- **CVSS**: 9.8 (Critical)
+- **Fix**: Update to openssl 3.0.12
+- **Description**: Buffer overflow in X.509 certificate verification
 
----
-
-### High Vulnerabilities (3)
-
-(List each CVE with package, fix version, CVSS)
-
----
-
-### Secrets Detected (2)
-
-| # | Type | File | Line | Action |
-|---|------|------|------|--------|
-| 1 | AWS Access Key | src/config.js | 15 | Rotate immediately |
-| 2 | GitHub Token | .env.example | 3 | Remove from repo |
+#### 2. CVE-2024-5678 - curl
+- **Package**: curl 7.88.0
+- **CVSS**: 9.1 (Critical)
+- **Fix**: Update to curl 8.4.0
 
 ---
 
-### SBOM Generated
+### High Vulnerabilities (5)
 
-(Only if --saveSBOM was used)
+(List each with package, CVSS, fix version)
 
-**File**: SBOM_Directory_projectname_1234567890.json
-**Format**: CycloneDX 1.6
-**Components**: 127 packages
+---
+
+### Secrets Detected (3)
+
+| # | Type | Location | Action |
+|---|------|----------|--------|
+| 1 | AWS Access Key | /app/config.py:23 | Rotate + remove |
+| 2 | Private Key | /app/certs/key.pem | Remove from image |
+| 3 | Database Password | /app/.env:5 | Use secrets manager |
+
+---
+
+### Malware Scan
+
+✅ No malware detected
 
 ---
 
 ### Recommendations
 
-1. **Critical**: Update lodash to 4.17.21 immediately
-2. **Secrets**: Rotate AWS access key and remove from codebase
-3. **CI/CD**: Add `--evaluatePolicy` to fail builds on policy violations
+1. **CRITICAL**: Rebuild base image with updated openssl (3.0.12+) and curl (8.4.0+)
+2. **SECRETS**: Never embed credentials in images - use runtime secrets injection
+3. **BASE IMAGE**: Consider using a distroless or minimal base image to reduce attack surface
+4. **CI/CD**: Add `tmas scan` to your build pipeline with `--evaluatePolicy` to block vulnerable images
 ```
+
+## Common Patterns
+
+### Quick scan (no prompts)
+```bash
+/trendai-scan-tmas                     # Scan current directory
+/trendai-scan-tmas nginx:latest        # Scan Docker Hub image
+/trendai-scan-tmas ./myapp             # Scan path (auto-detects Dockerfile)
+/trendai-scan-tmas myapp.tar           # Scan image tarball
+```
+
+### Advanced mode (interactive prompts)
+```bash
+/trendai-scan-tmas --advanced          # Prompts for options
+/trendai-scan-tmas ./myapp -a          # Advanced mode for path
+```
+
+### Scan a Docker Hub image
+```bash
+/trendai-scan-tmas nginx:latest
+/trendai-scan-tmas python:3.11-slim
+/trendai-scan-tmas ghcr.io/org/app:v1
+```
+
+### Scan a local Docker image
+```bash
+/trendai-scan-tmas myapp:dev
+```
+
+### Build and scan from Dockerfile
+```bash
+/trendai-scan-tmas .
+# Auto-detects Dockerfile, builds image, scans, cleans up
+```
+
+### Scan an exported image tar
+```bash
+docker save myapp:latest -o myapp.tar
+/trendai-scan-tmas myapp.tar
+```
+
+## Region Options
+
+| Region | Flag |
+|--------|------|
+| US East (default) | `-r us-east-1` |
+| EU Frankfurt | `-r eu-central-1` |
+| EU London | `-r eu-west-2` |
+| Canada | `-r ca-central-1` |
+| Japan | `-r ap-northeast-1` |
+| Singapore | `-r ap-southeast-1` |
+| Australia | `-r ap-southeast-2` |
 
 ## Troubleshooting
 
-### "TMAS_API_KEY not set"
-Set the environment variable with your Vision One API token.
+### "failed to get image"
+- For `docker:` - ensure Docker daemon is running
+- For `registry:` - check authentication (docker login)
 
 ### "malware scan not supported"
-Malware scanning (`-M`) only works with container images, not directories or files.
+Malware (`-M`) only works with container images, not directories.
 
-### "failed to get image"
-For Docker images, ensure Docker daemon is running. For registry images, check authentication.
-
-### Exit code 2 with --evaluatePolicy
-The scan completed but policy violations were found. Review the output for details.
+### Build fails
+Check Dockerfile syntax and ensure all build dependencies are available.
 
 ## Target
 
