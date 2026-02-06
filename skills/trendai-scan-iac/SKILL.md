@@ -55,7 +55,7 @@ if [ "$TF_COUNT" -gt 0 ]; then
     echo "ERROR: $(echo "$TF_RESULT" | jq -r '.error.message // .error')"
   else
     # Show all findings - the API returns riskLevel for each check
-    echo "$TF_RESULT" | jq -r '.scanResults // [] | .[] | "[\(.riskLevel)] \(.ruleId): \(.ruleTitle) | Resource: \(.resourceId) | \(.description)"' 2>/dev/null
+    echo "$TF_RESULT" | jq -r '.scanResults // [] | .[] | "[\(.riskLevel)] \(.ruleId): \(.ruleTitle) | Resource: \(.resourceId) | \(.description)\n  KB: \(.link // "N/A")"' 2>/dev/null
   fi
   echo ""
 fi
@@ -79,7 +79,7 @@ if [ "$CFN_COUNT" -gt 0 ]; then
       echo "ERROR: $(echo "$CFN_RESULT" | jq -r '.error.message // .error')"
     else
       # Show all findings
-      echo "$CFN_RESULT" | jq -r --arg f "$f" '.scanResults // [] | .[] | "[\(.riskLevel)] \(.ruleId): \(.ruleTitle) | File: \($f) | Resource: \(.resourceId) | \(.description)"' 2>/dev/null
+      echo "$CFN_RESULT" | jq -r --arg f "$f" '.scanResults // [] | .[] | "[\(.riskLevel)] \(.ruleId): \(.ruleTitle) | File: \($f) | Resource: \(.resourceId) | \(.description)\n  KB: \(.link // "N/A")"' 2>/dev/null
     fi
   done
   echo ""
@@ -99,7 +99,7 @@ Parse the output and present findings grouped by severity:
 - HIGH second
 - MEDIUM/LOW last
 
-Include the rule ID, description, file, and resource for each finding.
+Include the rule ID, description, file, resource, and KB link for each finding.
 
 ## Target
 
