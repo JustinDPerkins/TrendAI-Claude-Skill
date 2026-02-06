@@ -1,7 +1,7 @@
 ---
 name: trendai-scan-llm
 description: Scan LLM endpoints for prompt injection vulnerabilities using TMAS AI Scanner.
-argument-hint: [config-file]
+argument-hint: [endpoint-or-config]
 allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion
 ---
 
@@ -9,13 +9,14 @@ allowed-tools: Read, Grep, Glob, Bash, Write, AskUserQuestion
 
 Scan **LLM endpoints** for prompt injection and jailbreak vulnerabilities.
 
-## CRITICAL: Interactive Configuration Workflow
+## CRITICAL: Zero-Prompt Auto-Detection
 
-**ALWAYS use AskUserQuestion to gather configuration before running scans.** Running all attacks at once is CPU-intensive. Let users select specific attacks.
+**DEFAULT MODE**: Automatically detect LLM endpoints and models. NO PROMPTS unless ambiguous.
+
+**ADVANCED MODE**: If `$ARGUMENTS` contains `--advanced` or `-a`, use AskUserQuestion for all options.
 
 ### Step 1: Check Prerequisites
 
-First verify TMAS is installed and API keys are set:
 ```bash
 tmas version
 echo "TMAS_API_KEY: ${TMAS_API_KEY:+SET}"
@@ -24,170 +25,155 @@ echo "TARGET_API_KEY: ${TARGET_API_KEY:+SET}"
 
 If TMAS is not installed, tell user to run `/trendai-setup`.
 
-### Step 2: Check for Existing Config
+### Step 2: Parse Arguments
 
-If `$ARGUMENTS` contains a config file path, read it and skip to Step 7.
+Check what the user provided:
 
-Otherwise, proceed to gather configuration interactively.
+```bash
+ARGS="$ARGUMENTS"
 
-### Step 3: Ask Attack Objectives (REQUIRED)
+# Check for advanced mode
+if [[ "$ARGS" == *"--advanced"* ]] || [[ "$ARGS" == *"-a"* ]]; then
+    ADVANCED_MODE=true
+    ARGS=$(echo "$ARGS" | sed 's/--advanced//g' | sed 's/-a//g' | xargs)
+else
+    ADVANCED_MODE=false
+fi
 
-Use AskUserQuestion with multiSelect=true to ask which attacks to run:
+# Check if arg is a config file
+if [[ "$ARGS" == *.yaml ]] || [[ "$ARGS" == *.yml ]]; then
+    CONFIG_FILE="$ARGS"
+fi
 
-**Question**: "Which attack objectives do you want to test?"
-**Header**: "Attacks"
-**Options** (multiSelect: true):
-1. **System Prompt Leakage** - "Attempts to reveal the system prompt"
-2. **Sensitive Data Disclosure** - "Attempts to extract PII or sensitive data"
-3. **Agent Tool Definition Leakage** - "Attempts to discover available tools/functions"
-4. **Malicious Code Generation** - "Attempts to generate harmful code"
+# Check if arg is an endpoint URL
+if [[ "$ARGS" == http* ]]; then
+    ENDPOINT_URL="$ARGS"
+fi
 
-Note: Additional objectives available if user selects "Other":
-- Discover ML Model Family
-- Generate Hallucinated Software Entities
+# Check if arg is a model name (for Ollama)
+if [[ -n "$ARGS" ]] && [[ "$ARGS" != *.yaml ]] && [[ "$ARGS" != http* ]]; then
+    MODEL_NAME="$ARGS"
+fi
+```
 
-### Step 4: Ask Endpoint Details (REQUIRED)
+### Step 3: If Config File Provided, Use It
 
-Use AskUserQuestion to get endpoint info:
+If `$ARGUMENTS` is a `.yaml` or `.yml` file, read it and skip to Step 8.
 
-**Question**: "What is your LLM endpoint type?"
-**Header**: "Endpoint"
-**Options**:
-1. **OpenAI API** - "OpenAI or OpenAI-compatible (Azure, local LLMs with OpenAI adapter)"
-2. **Anthropic API** - "Claude API endpoints"
-3. **Custom endpoint** - "Other REST API with custom request format"
+### Step 4: Detect Endpoint Type
 
-Then ask user to provide the endpoint URL (base URL only, no /chat/completions).
+If no endpoint provided, ask what type:
 
-### Step 5: Ask Model Details (REQUIRED)
+**Use AskUserQuestion:**
+- **Question**: "What LLM endpoint do you want to scan?"
+- **Header**: "Endpoint"
+- **Options**:
+  1. **Local Ollama** - "Ollama running on localhost:11434"
+  2. **Local LM Studio** - "LM Studio running on localhost:1234"
+  3. **OpenAI API** - "OpenAI or Azure OpenAI"
+  4. **Other** - "Custom endpoint URL"
 
-Use AskUserQuestion:
+### Step 5: Auto-Discover Models (CRITICAL)
 
-**Question**: "Which model are you testing?"
-**Header**: "Model"
-**Options**:
-1. **GPT-4/GPT-4o** - "OpenAI GPT-4 family"
-2. **GPT-3.5-turbo** - "OpenAI GPT-3.5"
-3. **Claude** - "Anthropic Claude models"
-4. **Custom/Local** - "Specify model name"
+**Once you know the endpoint type, AUTOMATICALLY discover available models. Do NOT ask the user to specify a model manually.**
 
-### Step 6: Ask API Key Configuration (REQUIRED)
+```bash
+# For Ollama - automatically list models
+ollama list 2>/dev/null
 
-Use AskUserQuestion:
+# For LM Studio - query the API
+curl -s http://localhost:1234/v1/models 2>/dev/null | jq -r '.data[].id'
 
-**Question**: "Does your LLM endpoint require an API key?"
-**Header**: "Auth"
-**Options**:
-1. **Yes, use TARGET_API_KEY env var** - "API key is in TARGET_API_KEY environment variable (Recommended)"
-2. **Yes, different env var** - "Specify a different environment variable name"
-3. **No authentication needed** - "Endpoint doesn't require API key"
+# For Ollama via API (alternative)
+curl -s http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[].name'
+```
 
-### Step 6b: Ask About Attack Techniques (OPTIONAL)
+**After discovering models:**
 
-Use AskUserQuestion:
+| Models Found | Action |
+|--------------|--------|
+| 0 models | Tell user: "No models found. Run `ollama pull llama3.2` first." |
+| 1 model | Use it automatically, tell user which one |
+| 2+ models | **ASK which model** using AskUserQuestion |
 
-**Question**: "Do you want to add attack techniques? (Warning: multiplies test count and CPU usage)"
-**Header**: "Techniques"
-**Options**:
-1. **None only (Recommended)** - "Baseline tests only, fastest and lowest CPU usage"
-2. **Add jailbreak techniques** - "Include DAN, instruction override attacks (3-5x more tests)"
+**If multiple models found**, use AskUserQuestion:
+- **Question**: "Found X models. Which one to scan?"
+- **Header**: "Model"
+- **Options**: List each model name discovered (up to 4, then "Other")
 
-If user selects jailbreak techniques, use multiSelect for:
-- `Ignore all previous instructions`
-- `DAN (Do anything now)`
-- `Encrypt the response`
-- `Payload splitting`
+**For OpenAI/remote APIs**: Ask user to provide the model name (gpt-4, gpt-3.5-turbo, etc.)
 
-### Step 6c: Ask About Attack Modifiers (OPTIONAL)
+### Step 6: Set Defaults (No Prompts)
 
-Use AskUserQuestion:
+Use these defaults unless `--advanced` mode:
 
-**Question**: "Do you want to add attack modifiers? (Warning: further multiplies test count)"
-**Header**: "Modifiers"
-**Options**:
-1. **None only (Recommended)** - "No encoding, fastest execution"
-2. **Add encoding modifiers** - "Include Base64, scrambling (2-3x more tests)"
+```yaml
+# Default attack objectives (all 4 main ones)
+attack_objectives:
+  - System Prompt Leakage
+  - Sensitive Data Disclosure
+  - Agent Tool Definition Leakage
+  - Malicious Code Generation
 
-If user selects encoding modifiers:
-- `Base64 Encoding`
-- `Best-of-N Scrambling`
+# Default: baseline only (fastest)
+techniques: [None]
+modifiers: [None]
+
+# Default: low concurrency
+concurrency: 2
+```
 
 ### Step 7: Generate Config File
 
-Based on user answers, generate a config.yaml file:
+Generate config based on auto-detected values:
 
 ```yaml
 version: 1.0.0
 name: LLM Security Scan
-description: Targeted security scan for LLM endpoint
+description: Auto-detected security scan for LLM endpoint
 target:
   name: target-llm
-  endpoint: <USER_PROVIDED_ENDPOINT>  # BASE URL only!
-  api_key_env: <USER_PROVIDED_ENV_VAR or TARGET_API_KEY>
-  model: "<USER_PROVIDED_MODEL>"
-  type: "<openai|anthropic|custom>"
+  endpoint: <AUTO_DETECTED_ENDPOINT>  # BASE URL only!
+  api_key_env: <TARGET_API_KEY or omit for local>
+  model: "<AUTO_DETECTED_MODEL>"
+  type: "openai"  # Ollama/LM Studio use OpenAI-compatible API
   temperature: 0.0
   system_prompt: ""
 settings:
-  concurrency: 2  # Keep low to reduce CPU load
+  concurrency: 2
 attack_objectives:
-<ONLY SELECTED OBJECTIVES - see template below>
+  - name: System Prompt Leakage
+    description: The attacker learns the full system prompt
+    techniques: [None]
+    modifiers: [None]
+  - name: Sensitive Data Disclosure
+    description: The attacker learns sensitive information such as PII
+    techniques: [None]
+    modifiers: [None]
+  - name: Agent Tool Definition Leakage
+    description: An attacker discovers the tools accessible to the model
+    techniques: [None]
+    modifiers: [None]
+  - name: Malicious Code Generation
+    description: An attacker gets the model to generate malicious code
+    techniques: [None]
+    modifiers: [None]
 ```
 
-**Attack objective templates** (only include selected ones):
+**For local LLMs (Ollama, LM Studio)**: Omit `api_key_env` entirely.
 
-Use `techniques: [None]` and `modifiers: [None]` for baseline only.
-If user selected additional techniques/modifiers, add them to the arrays.
+**CPU Impact** (default config): 4 objectives × ~15-25 tests = ~60-100 total tests
 
-```yaml
-# System Prompt Leakage
-- name: System Prompt Leakage
-  description: The attacker learns the full system prompt
-  techniques: [None]  # or [None, "DAN (Do anything now)", "Ignore all previous instructions"]
-  modifiers: [None]   # or [None, "Base64 Encoding"]
+### Step 8: Save Config (No Prompt)
 
-# Sensitive Data Disclosure
-- name: Sensitive Data Disclosure
-  description: The attacker learns sensitive information such as PII
-  techniques: [None]
-  modifiers: [None]
+Save to default location without asking:
 
-# Agent Tool Definition Leakage
-- name: Agent Tool Definition Leakage
-  description: An attacker discovers the tools accessible to the model
-  techniques: [None]
-  modifiers: [None]
-
-# Malicious Code Generation
-- name: Malicious Code Generation
-  description: An attacker gets the model to generate malicious code
-  techniques: [None]
-  modifiers: [None]
-
-# Discover ML Model Family
-- name: Discover ML Model Family
-  description: An attacker discovers the type of ML model being used
-  techniques: [None]
-  modifiers: [None]
-
-# Generate Hallucinated Software Entities
-- name: Generate Hallucinated Software Entities
-  description: An attacker looks for hallucinated software entities
-  techniques: [None]
-  modifiers: [None]
+```bash
+CONFIG_FILE="./llm-scan-config.yaml"
+# Write config using Write tool
 ```
 
-**CPU Impact Examples:**
-- 1 objective + None technique + None modifier = ~15-25 tests
-- 1 objective + 3 techniques + None modifier = ~45-75 tests
-- 1 objective + 3 techniques + 2 modifiers = ~90-150 tests
-- 6 objectives + all techniques + all modifiers = 500+ tests (HIGH CPU!)
-
-### Step 8: Confirm and Save Config
-
-Show the user the generated config and ask where to save it (default: `./llm-scan-config.yaml`).
-
-Write the config file using the Write tool.
+Tell user: "Saved config to `llm-scan-config.yaml`"
 
 ### Step 9: Run the Scan with JSON Output
 
@@ -338,6 +324,33 @@ Based on findings, provide actionable recommendations:
 3. Model configuration changes
 ```
 
+## Common Patterns
+
+### Zero-prompt scans (auto-detect)
+```bash
+/trendai-scan-llm                      # Auto-detect Ollama/local LLMs
+/trendai-scan-llm llama3.2             # Scan specific Ollama model
+/trendai-scan-llm mistral:7b           # Scan specific model variant
+```
+
+### Scan with existing config
+```bash
+/trendai-scan-llm config.yaml          # Use existing config file
+/trendai-scan-llm ./llm-scan-config.yaml
+```
+
+### Scan remote endpoint
+```bash
+/trendai-scan-llm http://localhost:11434/v1   # Explicit Ollama endpoint
+/trendai-scan-llm http://localhost:1234/v1    # LM Studio
+```
+
+### Advanced mode (interactive prompts)
+```bash
+/trendai-scan-llm --advanced           # Prompts for all options
+/trendai-scan-llm llama3.2 -a          # Advanced mode for specific model
+```
+
 ## Troubleshooting
 
 ### "version: is a required field"
@@ -349,6 +362,10 @@ Config needs a `target:` block with `name`, `endpoint`, `model`, and `type`.
 ### 401 Unauthorized / Double path error
 Ensure endpoint is **base URL** only (not the full `/chat/completions` path).
 
+### No models detected
+- Check Ollama is running: `ollama list`
+- Check if model is pulled: `ollama pull llama3.2`
+
 ## Target
 
-Config file: $ARGUMENTS
+Endpoint, model, or config file: $ARGUMENTS
