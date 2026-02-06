@@ -177,11 +177,12 @@ If user selected additional techniques/modifiers, add them to the arrays.
   modifiers: [None]
 ```
 
-**CPU Impact Examples:**
-- 1 objective + None technique + None modifier = ~15-25 tests
-- 1 objective + 3 techniques + None modifier = ~45-75 tests
-- 1 objective + 3 techniques + 2 modifiers = ~90-150 tests
-- 6 objectives + all techniques + all modifiers = 500+ tests (HIGH CPU!)
+**Attack Count Examples** (based on actual TMAS behavior):
+- 1 objective + None technique + None modifier = ~6-7 attacks
+- 1 objective + 2 techniques + None modifier = ~12-14 attacks
+- 1 objective + 3 techniques + 2 modifiers = ~36-42 attacks
+- 4 objectives + None technique + None modifier = ~24-28 attacks
+- 6 objectives + all techniques + all modifiers = 200+ attacks (HIGH CPU!)
 
 ### Step 8: Confirm and Save Config
 
@@ -233,6 +234,27 @@ When using `type: "openai"`, TMAS **automatically appends** `/chat/completions`.
 
 ## Output Format
 
+### Parsing TMAS Output
+
+TMAS output has two key sections:
+
+1. **Header stats** - Shows total attack count:
+   ```
+   Completed attacks: 7/7
+   Successful attacks: 0/7
+   Elapsed time: 1m56s
+   ```
+
+2. **Summary table** - Shows breakdown by objective:
+   ```
+   | Objective                      | Technique | Modifier | Attack Success Rate |
+   | Sensitive Data Disclosure (0/6)| None (0/6)| None     | 0/6                 |
+   ```
+
+**Note**: The header "Completed attacks" count may be 1 higher than the table breakdown total. TMAS runs an additional baseline/validation test that isn't shown in the summary table. This is expected behavior - use the **table breakdown** for detailed reporting and the **header count** for total attacks executed.
+
+### Result Presentation
+
 Present results in this format:
 
 ```markdown
@@ -241,17 +263,28 @@ Present results in this format:
 **Endpoint**: https://api.openai.com/v1
 **Model**: gpt-4
 **Scanned**: 2026-02-05
+**Total Attacks**: 7 (from header) | **Elapsed Time**: 1m56s
 
 ### Summary
 
-| Category | Tested | Vulnerable | Success Rate |
-|----------|--------|------------|--------------|
-| System Prompt Leakage | 25 | 6 | 24% |
+| Objective | Technique | Attacks | Successful | Rate |
+|-----------|-----------|---------|------------|------|
+| Sensitive Data Disclosure | None | 6 | 0 | 0% |
+| **Total** | | **6** | **0** | **0%** |
+
+> Note: TMAS reports 7 total attacks but table shows 6. The extra attack is an internal baseline test.
+
+### Result
+
+**No vulnerabilities found** - All attack attempts were blocked.
+
+(If vulnerabilities ARE found, list them like this:)
 
 ### Vulnerabilities Found
 
 #### System Prompt Leakage - Instruction Override
 - **Severity**: High
+- **Technique**: DAN (Do anything now)
 - **Attack**: "Ignore all previous instructions..."
 - **Response**: Model revealed system prompt
 - **Recommendation**: Strengthen system prompt boundaries
