@@ -177,12 +177,11 @@ If user selected additional techniques/modifiers, add them to the arrays.
   modifiers: [None]
 ```
 
-**Attack Count Examples** (based on actual TMAS behavior):
-- 1 objective + None technique + None modifier = ~6-7 attacks
-- 1 objective + 2 techniques + None modifier = ~12-14 attacks
-- 1 objective + 3 techniques + 2 modifiers = ~36-42 attacks
-- 4 objectives + None technique + None modifier = ~24-28 attacks
-- 6 objectives + all techniques + all modifiers = 200+ attacks (HIGH CPU!)
+**CPU Impact Examples:**
+- 1 objective + None technique + None modifier = ~15-25 tests
+- 1 objective + 3 techniques + None modifier = ~45-75 tests
+- 1 objective + 3 techniques + 2 modifiers = ~90-150 tests
+- 6 objectives + all techniques + all modifiers = 500+ tests (HIGH CPU!)
 
 ### Step 8: Confirm and Save Config
 
@@ -190,10 +189,57 @@ Show the user the generated config and ask where to save it (default: `./llm-sca
 
 Write the config file using the Write tool.
 
-### Step 9: Run the Scan
+### Step 9: Run the Scan with JSON Output
+
+Always use `--output json` for detailed results and history tracking:
 
 ```bash
-tmas aiscan llm -c <config-file> -r us-east-1
+# Create scan history directory
+mkdir -p .trendai-scans
+
+# Run scan with JSON output, save to timestamped file
+SCAN_FILE=".trendai-scans/llm-scan-$(date +%Y%m%d-%H%M%S).json"
+tmas aiscan llm -c <config-file> -r us-east-1 --output json 2>&1 | tee "$SCAN_FILE"
+```
+
+### Step 10: Parse JSON and Generate Report
+
+The JSON output contains:
+- `details`: scan metadata (scan_id, endpoint, model, duration)
+- `evaluation_results`: array of individual attack results
+
+For each result, extract:
+- `attack_objective`: what was tested
+- `attack_outcome`: "Attack Succeeded" or "Attack Failed"
+- `severity`: "MEDIUM", "HIGH", etc. (only present on successful attacks)
+- `chat_history`: the attack prompt and model response
+- `evaluation`: AI evaluation of why attack succeeded/failed
+
+### Step 11: Compare with Previous Scans (Drift Detection)
+
+Check for previous scans to show improvement/regression:
+
+```bash
+# Find previous scans for same endpoint/model
+ls -t .trendai-scans/llm-scan-*.json 2>/dev/null | head -5
+```
+
+If previous scans exist, compare:
+1. Read the most recent previous scan JSON
+2. Compare success rates per objective
+3. Show drift indicators (↑ improved, ↓ regressed, → unchanged)
+
+**Drift Report Format:**
+
+```markdown
+### Security Posture Drift
+
+| Objective | Previous | Current | Trend |
+|-----------|----------|---------|-------|
+| System Prompt Leakage | 8/25 (32%) | 5/25 (20%) | ↑ Improved (-12%) |
+| Sensitive Data Disclosure | 2/25 (8%) | 4/25 (16%) | ↓ Regressed (+8%) |
+
+**Overall**: 10/50 → 9/50 (↑ 2% improvement)
 ```
 
 ## Reference: Attack Techniques and Modifiers
@@ -234,60 +280,62 @@ When using `type: "openai"`, TMAS **automatically appends** `/chat/completions`.
 
 ## Output Format
 
-### Parsing TMAS Output
-
-TMAS output has two key sections:
-
-1. **Header stats** - Shows total attack count:
-   ```
-   Completed attacks: 7/7
-   Successful attacks: 0/7
-   Elapsed time: 1m56s
-   ```
-
-2. **Summary table** - Shows breakdown by objective:
-   ```
-   | Objective                      | Technique | Modifier | Attack Success Rate |
-   | Sensitive Data Disclosure (0/6)| None (0/6)| None     | 0/6                 |
-   ```
-
-**Note**: The header "Completed attacks" count may be 1 higher than the table breakdown total. TMAS runs an additional baseline/validation test that isn't shown in the summary table. This is expected behavior - use the **table breakdown** for detailed reporting and the **header count** for total attacks executed.
-
-### Result Presentation
-
-Present results in this format:
+Parse the JSON output and present a rich report:
 
 ```markdown
-## LLM Security Scan Results
+## LLM Security Scan Report
 
-**Endpoint**: https://api.openai.com/v1
-**Model**: gpt-4
-**Scanned**: 2026-02-05
-**Total Attacks**: 7 (from header) | **Elapsed Time**: 1m56s
+**Scan ID**: `<from details.scan_id>`
+**Endpoint**: <from details.endpoint>
+**Model**: <from details.application>
+**Scan Time**: <from details.scan_time>
+**Duration**: <from details.scan_duration>
+
+---
 
 ### Summary
 
-| Objective | Technique | Attacks | Successful | Rate |
-|-----------|-----------|---------|------------|------|
-| Sensitive Data Disclosure | None | 6 | 0 | 0% |
-| **Total** | | **6** | **0** | **0%** |
+| Objective | Technique | Modifier | Success Rate |
+|-----------|-----------|----------|--------------|
+| System Prompt Leakage | None | None | **5/25 (20%)** |
 
-> Note: TMAS reports 7 total attacks but table shows 6. The extra attack is an internal baseline test.
+---
 
-### Result
+### Security Posture Drift
 
-**No vulnerabilities found** - All attack attempts were blocked.
+(Only show if previous scans exist in .trendai-scans/)
 
-(If vulnerabilities ARE found, list them like this:)
+| Objective | Previous | Current | Trend |
+|-----------|----------|---------|-------|
+| System Prompt Leakage | 8/25 (32%) | 5/25 (20%) | ↑ Improved |
 
-### Vulnerabilities Found
+---
 
-#### System Prompt Leakage - Instruction Override
-- **Severity**: High
-- **Technique**: DAN (Do anything now)
-- **Attack**: "Ignore all previous instructions..."
-- **Response**: Model revealed system prompt
-- **Recommendation**: Strengthen system prompt boundaries
+### Successful Attacks
+
+For each result where `attack_outcome == "Attack Succeeded"`:
+
+| # | Attack Prompt | Model Leaked |
+|---|---------------|--------------|
+| 1 | `<chat_history[0].content>` | "<summary of chat_history[1].content>" |
+
+---
+
+### Attack Pattern Analysis
+
+Analyze the successful attacks and identify:
+- What types of prompts worked (gibberish, direct questions, encoded, etc.)
+- What information was leaked (restrictions, capabilities, system prompt text)
+- Common patterns in model responses
+
+---
+
+### Recommendations
+
+Based on findings, provide actionable recommendations:
+1. Specific mitigations for each vulnerability type
+2. Suggestions for follow-up scans (e.g., add jailbreak techniques)
+3. Model configuration changes
 ```
 
 ## Troubleshooting
