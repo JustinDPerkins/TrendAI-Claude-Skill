@@ -29,13 +29,36 @@ fi
 
 ### Step 1: Check Prerequisites
 
+Run these checks and stop immediately if critical ones fail:
+
 ```bash
+# Check TMAS CLI is installed
+if ! command -v tmas &>/dev/null && ! ~/.local/bin/tmas version &>/dev/null; then
+    echo "ERROR: TMAS CLI not installed"
+    echo "Run /trendai-setup to install"
+    exit 1
+fi
+
+# Check API key is set
+if [ -z "$TMAS_API_KEY" ]; then
+    echo "ERROR: TMAS_API_KEY not set"
+    echo "Run /trendai-setup to configure"
+    exit 1
+fi
+
+# Show status
 tmas version
-echo "TMAS_API_KEY: ${TMAS_API_KEY:+SET}"
-docker --version 2>/dev/null || echo "Docker not available"
+echo "TMAS_API_KEY: SET (${#TMAS_API_KEY} chars)"
+
+# Docker is optional (only needed for container scans)
+if command -v docker &>/dev/null; then
+    docker --version
+else
+    echo "Docker: NOT AVAILABLE (directory scans still work)"
+fi
 ```
 
-If TMAS is not installed, tell user to run `/trendai-setup`.
+**STOP HERE if TMAS or API key checks fail.** Tell user to run `/trendai-setup` first.
 
 ### Step 2: Determine Target Path
 

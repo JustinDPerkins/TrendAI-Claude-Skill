@@ -1,2 +1,14 @@
-# Local Claude IDE config (do not push)
-CLAUDE.md
+# Scan results (user-specific)
+.trendai-scans/
+
+# Generated configs
+llm-scan-config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~

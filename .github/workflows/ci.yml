@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate plugin.json
+        run: |
+          echo "Checking plugin.json structure..."
+          if ! jq empty .claude-plugin/plugin.json 2>/dev/null; then
+            echo "ERROR: Invalid JSON in plugin.json"
+            exit 1
+          fi
+
+          # Check required fields
+          NAME=$(jq -r '.name' .claude-plugin/plugin.json)
+          VERSION=$(jq -r '.version' .claude-plugin/plugin.json)
+
+          if [ -z "$NAME" ] || [ "$NAME" = "null" ]; then
+            echo "ERROR: Missing 'name' in plugin.json"
+            exit 1
+          fi
+
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "ERROR: Missing 'version' in plugin.json"
+            exit 1
+          fi
+
+          echo "Plugin: $NAME v$VERSION"
+          echo "plugin.json is valid"
+
+      - name: Validate marketplace.json
+        run: |
+          echo "Checking marketplace.json structure..."
+          if ! jq empty .claude-plugin/marketplace.json 2>/dev/null; then
+            echo "ERROR: Invalid JSON in marketplace.json"
+            exit 1
+          fi
+          echo "marketplace.json is valid"
+
+      - name: Validate skill files
+        run: |
+          echo "Checking skill files..."
+          ERRORS=0
+
+          for skill_dir in skills/*/; do
+            skill_name=$(basename "$skill_dir")
+            skill_file="$skill_dir/SKILL.md"
+
+            if [ ! -f "$skill_file" ]; then
+              echo "ERROR: Missing SKILL.md in $skill_dir"
+              ERRORS=$((ERRORS + 1))
+              continue
+            fi
+
+            # Check for required frontmatter
+            if ! head -1 "$skill_file" | grep -q "^---$"; then
+              echo "ERROR: $skill_file missing YAML frontmatter"
+              ERRORS=$((ERRORS + 1))
+              continue
+            fi
+
+            # Extract and validate frontmatter
+            FRONTMATTER=$(sed -n '/^---$/,/^---$/p' "$skill_file" | sed '1d;$d')
+
+            if ! echo "$FRONTMATTER" | grep -q "^name:"; then
+              echo "ERROR: $skill_file missing 'name' in frontmatter"
+              ERRORS=$((ERRORS + 1))
+            fi
+
+            if ! echo "$FRONTMATTER" | grep -q "^description:"; then
+              echo "ERROR: $skill_file missing 'description' in frontmatter"
+              ERRORS=$((ERRORS + 1))
+            fi
+
+            echo "Validated: $skill_name"
+          done
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "Found $ERRORS error(s)"
+            exit 1
+          fi
+
+          echo "All skill files are valid"
+
+      - name: Check for hardcoded paths
+        run: |
+          echo "Checking for hardcoded user paths..."
+          if grep -r "/Users/" --include="*.md" --include="*.json" . 2>/dev/null | grep -v ".git"; then
+            echo "WARNING: Found hardcoded user paths (may be intentional in examples)"
+          fi
+          echo "Path check complete"

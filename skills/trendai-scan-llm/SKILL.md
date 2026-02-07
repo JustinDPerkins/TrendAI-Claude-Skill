@@ -17,13 +17,30 @@ Scan **LLM endpoints** for prompt injection and jailbreak vulnerabilities.
 
 ### Step 1: Check Prerequisites
 
+Run these checks and stop immediately if any fail:
+
 ```bash
+# Check TMAS CLI is installed
+if ! command -v tmas &>/dev/null && ! ~/.local/bin/tmas version &>/dev/null; then
+    echo "ERROR: TMAS CLI not installed"
+    echo "Run /trendai-setup to install"
+    exit 1
+fi
+
+# Check API key is set
+if [ -z "$TMAS_API_KEY" ]; then
+    echo "ERROR: TMAS_API_KEY not set"
+    echo "Run /trendai-setup to configure"
+    exit 1
+fi
+
+# Show status
 tmas version
-echo "TMAS_API_KEY: ${TMAS_API_KEY:+SET}"
-echo "TARGET_API_KEY: ${TARGET_API_KEY:+SET}"
+echo "TMAS_API_KEY: SET (${#TMAS_API_KEY} chars)"
+echo "TARGET_API_KEY: ${TARGET_API_KEY:+SET}${TARGET_API_KEY:-NOT SET (only needed for authenticated endpoints)}"
 ```
 
-If TMAS is not installed, tell user to run `/trendai-setup`.
+**STOP HERE if prerequisites fail.** Tell user to run `/trendai-setup` first.
 
 ### Step 2: Parse Arguments
 
